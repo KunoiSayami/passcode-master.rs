@@ -60,7 +60,7 @@ impl Upstream {
 #[derive(Clone, Debug, Deserialize)]
 pub struct Web {
     enabled: bool,
-    port: u16,
+    bind: String,
     prefix: Option<String>,
     access_key: String,
 }
@@ -70,8 +70,8 @@ impl Web {
         self.enabled
     }
 
-    pub fn port(&self) -> u16 {
-        self.port
+    pub fn bind(&self) -> &str {
+        &self.bind
     }
 
     pub fn prefix(&self) -> Option<&String> {
@@ -87,7 +87,7 @@ impl Default for Web {
     fn default() -> Self {
         Self {
             enabled: false,
-            port: 26511,
+            bind: "0.0.0.0:26511".to_string(),
             prefix: None,
             access_key: "114514".to_string(),
         }

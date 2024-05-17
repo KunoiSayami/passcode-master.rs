@@ -137,7 +137,6 @@ pub async fn bot_run(config: Config, database: DatabaseOperator) -> anyhow::Resu
             .branch(handle_message)
             .branch(handle_callback_query),
     )
-    .enable_ctrlc_handler()
     .dependencies(dptree::deps![arg])
     .enable_ctrlc_handler()
     .build()

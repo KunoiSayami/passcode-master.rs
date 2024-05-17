@@ -16,9 +16,11 @@ async fn async_main(config: String) -> anyhow::Result<()> {
         .await
         .tap_err(|e| error!("Load configure error: {:?}", e))?;
 
-    let (database, operator) = DatabaseHandle::connect(config.database())
+    let (database, operator, broadcast) = DatabaseHandle::connect(config.database())
         .await
         .tap_err(|e| error!("Load database error: {:?}", e))?;
+
+    let web = tokio::spawn(web::route(config.clone(), broadcast));
 
     bot_run(config, operator.clone().into()).await?;
 
@@ -28,6 +30,8 @@ async fn async_main(config: String) -> anyhow::Result<()> {
         .wait()
         .await
         .tap_err(|e| error!("Database error: {:?}", e))?;
+
+    web.await??;
     Ok(())
 }
 

@@ -1,6 +1,7 @@
 use futures_util::StreamExt as _;
 use helper_generator::Helper;
-use log::info;
+use kstool::time::get_current_second;
+use log::{error, info};
 use sqlx::{sqlite::SqliteConnectOptions, Connection, SqliteConnection};
 
 pub mod v1 {
@@ -24,15 +25,41 @@ pub mod v1 {
             PRIMARY KEY("id")
         );
 
+        CREATE TABLE "cookies" (
+            "id"    TEXT NOT NULL,
+            "csrf_token" TEXT NOT NULL,
+            "session_id" TEXT NOT NULL,
+            "last_login" INTEGER NOT NULL,
+            "belong" INTEGER NOT NULL,
+            PRIMARY KEY("id")
+        );
+
         INSERT INTO "meta" VALUES ('version', '1');
     "#;
 
     pub const VERSION: &str = "1";
+
+    #[derive(Clone)]
+    pub enum BroadcastEvent {
+        NewCode(String),
+        Exit,
+    }
+
+    impl BroadcastEvent {
+        pub fn new_code(code: &str) -> Self {
+            Self::NewCode(code.to_string())
+        }
+
+        pub fn exit() -> Self {
+            Self::Exit
+        }
+    }
 }
 
 #[derive(Debug)]
 pub struct Database {
     conn: sqlx::SqliteConnection,
+    broadcast: broadcast::Sender<current::BroadcastEvent>,
     init: bool,
 }
 
@@ -77,14 +104,21 @@ pub trait DatabaseCheckExt {
 }
 
 impl Database {
-    pub async fn connect(database: &str) -> DBResult<Self> {
+    pub async fn connect(
+        database: &str,
+        broadcast: broadcast::Sender<current::BroadcastEvent>,
+    ) -> DBResult<Self> {
         let conn = SqliteConnection::connect_with(
             &SqliteConnectOptions::new()
                 .create_if_missing(true)
                 .filename(database),
         )
         .await?;
-        Ok(Self { conn, init: false })
+        Ok(Self {
+            conn,
+            init: false,
+            broadcast,
+        })
     }
 
     pub async fn init(&mut self) -> sqlx::Result<bool> {
@@ -122,6 +156,10 @@ impl Database {
             .bind(message_id)
             .execute(&mut self.conn)
             .await?;
+        self.broadcast
+            .send(current::BroadcastEvent::new_code(code))
+            .ok()
+            .tap_none(|| error!("Unable send broadcast"));
         Ok(())
     }
 
@@ -167,7 +205,56 @@ impl Database {
         }
     }
 
+    pub async fn update_last_time(&mut self, id: &str) -> DBResult<()> {
+        sqlx::query(r#"UPDATE "cookie" SET "last_login" = ? WHERE "id" = ?"#)
+            .bind(get_current_second() as i64)
+            .bind(id)
+            .execute(&mut self.conn)
+            .await?;
+        Ok(())
+    }
+
+    pub async fn set_cookie(
+        &mut self,
+        user: i64,
+        csrf: &str,
+        session: &str,
+        id: &str,
+    ) -> DBResult<bool> {
+        match self.query_cookie(id).await? {
+            Some(cookie) => {
+                if cookie.belong() != user {
+                    return Ok(false);
+                }
+                sqlx::query(r#"UPDATE "cookie" SET "csrf_token"= ?, "session" = ? WHERE "id" = ?"#)
+                    .bind(csrf)
+                    .bind(session)
+                    .bind(id)
+                    .execute(&mut self.conn)
+                    .await?;
+            }
+            None => {
+                sqlx::query(r#"INSERT INTO "cookie" VALUES (?, ?, ?, 0, ?)"#)
+                    .bind(id)
+                    .bind(csrf)
+                    .bind(session)
+                    .bind(user)
+                    .execute(&mut self.conn)
+                    .await?;
+            }
+        }
+        Ok(true)
+    }
+
+    pub async fn query_cookie(&mut self, id: &str) -> DBResult<Option<Cookie>> {
+        sqlx::query_as(r#"SELECT * FROM "cookie" WHERE "id" = ?"#)
+            .bind(id)
+            .fetch_optional(&mut self.conn)
+            .await
+    }
+
     pub async fn close(self) -> DBResult<()> {
+        self.broadcast.send(current::BroadcastEvent::exit()).ok();
         self.conn.close().await
     }
 }
@@ -220,8 +307,15 @@ pub struct DatabaseHandle {
 }
 
 impl DatabaseHandle {
-    pub async fn connect(file: &str) -> anyhow::Result<(Self, DatabaseHelper)> {
-        let mut database = Database::connect(file).await?;
+    pub async fn connect(
+        file: &str,
+    ) -> anyhow::Result<(
+        Self,
+        DatabaseHelper,
+        broadcast::Receiver<current::BroadcastEvent>,
+    )> {
+        let (s, r) = broadcast::channel(32);
+        let mut database = Database::connect(file, s).await?;
         database.init().await?;
         let (sender, receiver) = DatabaseHelper::new(2048);
         Ok((
@@ -229,6 +323,7 @@ impl DatabaseHandle {
                 handle: tokio::spawn(Self::run(database, receiver)),
             },
             sender,
+            r,
         ))
     }
 
@@ -311,6 +406,7 @@ impl DatabaseOperator {
         self.0.user_revoke(user, s).await?;
         r.await.ok()
     }
+
     pub async fn code_query(&self, code: String) -> Option<CodeRow> {
         let (s, r) = oneshot::channel();
         self.0.code_query(code, s).await?;
@@ -343,7 +439,10 @@ impl From<DatabaseHelper> for DatabaseOperator {
 }
 
 pub type DBResult<T> = sqlx::Result<T>;
-use tokio::sync::oneshot;
+use tap::TapOptional;
+use tokio::sync::{broadcast, oneshot};
 pub use v1 as current;
 
-use crate::types::{CodeRow, User};
+use crate::types::{CodeRow, Cookie, User};
+
+pub use current::BroadcastEvent;
