@@ -1,5 +1,5 @@
 use argon2::{Argon2, PasswordVerifier};
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use sqlx::prelude::FromRow;
 
 #[derive(Clone, Copy, Debug, FromRow)]
@@ -46,6 +46,7 @@ pub struct Cookie {
     session_id: String,
     last_login: i64,
     belong: i64,
+    disabled: bool,
 }
 
 impl Cookie {
@@ -66,6 +67,10 @@ impl Cookie {
     }
     pub fn belong(&self) -> i64 {
         self.belong
+    }
+
+    pub fn disabled(&self) -> bool {
+        self.disabled
     }
 }
 
@@ -99,5 +104,76 @@ impl TryFrom<&str> for Auth {
 
     fn try_from(value: &str) -> Result<Self, Self::Error> {
         serde_json::from_str(value)
+    }
+}
+
+#[derive(Clone, Debug, FromRow)]
+pub struct HistoryRow {
+    timestamp: i64,
+    id: String,
+    code: String,
+    error: Option<String>,
+}
+
+impl HistoryRow {
+    pub fn timestamp(&self) -> i64 {
+        self.timestamp
+    }
+
+    pub fn id(&self) -> &str {
+        &self.id
+    }
+
+    pub fn code(&self) -> &str {
+        &self.code
+    }
+
+    pub fn error(&self) -> Option<&String> {
+        self.error.as_ref()
+    }
+}
+
+#[derive(Clone, Debug, FromRow)]
+pub struct MetaRow {
+    key: String,
+    value: String,
+}
+
+impl MetaRow {
+    pub fn value(&self) -> &str {
+        &self.value
+    }
+
+    pub fn key(&self) -> &str {
+        &self.key
+    }
+
+    pub fn into_value(self) -> String {
+        self.value
+    }
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct VStats {
+    v: String,
+    last: u64,
+}
+
+impl VStats {
+    pub fn v(&self) -> &str {
+        &self.v
+    }
+
+    pub fn last(&self) -> u64 {
+        self.last
+    }
+    pub fn new(v: String) -> Self {
+        Self {
+            v,
+            last: kstool::time::get_current_second(),
+        }
+    }
+    pub fn json(self) -> serde_json::Value {
+        serde_json::to_value(self).unwrap()
     }
 }

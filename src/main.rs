@@ -8,6 +8,7 @@ use tap::TapFallible;
 mod config;
 mod database;
 mod platform;
+mod private;
 mod types;
 pub mod web;
 

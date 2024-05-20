@@ -275,6 +275,21 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "8c3c1a368f70d6cf7302d78f8f7093da241fb8e8807c05cc9e51a125895a6d5b"
 
 [[package]]
+name = "bit-set"
+version = "0.5.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "0700ddab506f33b20a03b13996eccd309a48e5ff77d0d95926aa0210fb4e95f1"
+dependencies = [
+ "bit-vec",
+]
+
+[[package]]
+name = "bit-vec"
+version = "0.6.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "349f9b6a179ed607305526ca489b34ad0a41aed5f7980fa90eb03160b69598fb"
+
+[[package]]
 name = "bitflags"
 version = "1.3.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -392,8 +407,8 @@ dependencies = [
  "clap",
  "env_logger",
  "futures-util",
- "helper-generator",
  "kstool",
+ "kstool-helper-generator",
  "log",
  "once_cell",
  "serde",
@@ -665,6 +680,17 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "0206175f82b8d6bf6652ff7d71a1e27fd2e4efde587fd368662814d6ec1d9ce0"
 
 [[package]]
+name = "fancy-regex"
+version = "0.13.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "531e46835a22af56d1e3b66f04844bed63158bc094a628bec1d321d9b4c44bf2"
+dependencies = [
+ "bit-set",
+ "regex-automata",
+ "regex-syntax",
+]
+
+[[package]]
 name = "fastrand"
 version = "2.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -932,16 +958,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "95505c38b4572b2d910cecb0281560f54b440a19336cbbcb27bf6ce6adc6f5a8"
 dependencies = [
  "unicode-segmentation",
-]
-
-[[package]]
-name = "helper-generator"
-version = "0.3.0"
-source = "git+https://github.com/KunoiSayami/helper-generator.git#0ec953c4f679b09d42e6cb2c4c0cc1cf29ec46fa"
-dependencies = [
- "proc-macro2",
- "quote",
- "syn 2.0.63",
 ]
 
 [[package]]
@@ -1243,6 +1259,19 @@ name = "kstool"
 version = "0.2.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d3022ae3fecb671d0e97a08a2d308fc88379676bff59dc9c9e23a6663b6b614a"
+
+[[package]]
+name = "kstool-helper-generator"
+version = "0.4.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "6aa47bc05f7a570fa37566c84b2574200e8807bd3ea0e34592cd1eaa6fffa518"
+dependencies = [
+ "fancy-regex",
+ "once_cell",
+ "proc-macro2",
+ "quote",
+ "syn 2.0.63",
+]
 
 [[package]]
 name = "lazy_static"

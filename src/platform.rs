@@ -16,7 +16,7 @@ use teloxide::{
 
 use atoi::FromRadix10SignedChecked;
 
-use crate::{config::Config, database::DatabaseOperator};
+use crate::{config::Config, database::DatabaseHelper};
 
 #[derive(BotCommands, Clone)]
 #[command(rename_rule = "lowercase")]
@@ -26,13 +26,13 @@ enum Command {
 
 #[derive(Clone, Debug)]
 pub struct NecessaryArg {
-    database: DatabaseOperator,
+    database: DatabaseHelper,
     admin: Vec<ChatId>,
     target: i64,
 }
 
 impl NecessaryArg {
-    pub fn new(database: DatabaseOperator, admin: Vec<ChatId>, target: i64) -> Self {
+    pub fn new(database: DatabaseHelper, admin: Vec<ChatId>, target: i64) -> Self {
         Self {
             database,
             admin,
@@ -40,7 +40,7 @@ impl NecessaryArg {
         }
     }
 
-    pub fn database(&self) -> &DatabaseOperator {
+    pub fn database(&self) -> &DatabaseHelper {
         &self.database
     }
 
@@ -94,7 +94,7 @@ pub fn bot(config: &Config) -> anyhow::Result<Bot> {
     })
 }
 
-pub async fn bot_run(config: Config, database: DatabaseOperator) -> anyhow::Result<()> {
+pub async fn bot_run(config: Config, database: DatabaseHelper) -> anyhow::Result<()> {
     let bot = bot(&config)?.parse_mode(ParseMode::MarkdownV2);
 
     let arg = Arc::new(NecessaryArg::new(
@@ -179,7 +179,7 @@ pub async fn handle_message(bot: Bot, msg: Message, arg: Arc<NecessaryArg>) -> a
         return Ok(());
     }
     let code = msg.text().unwrap();
-    if let Some(c) = arg.database().code_query(code.to_string()).await {
+    if let Some(Some(c)) = arg.database().code_query(code.to_string()).await {
         if c.is_fr() {
             bot.send_message(msg.chat.id, format!("`{}` already FR", code))
                 .await?;
@@ -192,7 +192,7 @@ pub async fn handle_message(bot: Bot, msg: Message, arg: Arc<NecessaryArg>) -> a
         let msg = bot
             .send_message(arg.target(), format!("`{}`", code))
             .await?;
-        arg.database.code_insert(code.to_string(), msg.id.0).await;
+        arg.database.code_add(code.to_string(), msg.id.0).await;
     }
 
     Ok(())
@@ -226,7 +226,7 @@ pub async fn handle_callback_query(
             },
             "code" => {
                 if cq.action.eq("fr") {
-                    if let Some(code) = arg.database().code_fr(cq.target.to_string()).await {
+                    if let Some(Some(code)) = arg.database().code_fr(cq.target.to_string()).await {
                         bot.edit_message_text(
                             arg.target(),
                             MessageId(code.message_id()),
@@ -249,6 +249,7 @@ pub async fn handle_callback_query(
     bot.answer_callback_query(msg.id).await?;
     Ok(())
 }
+
 pub fn make_fr_keyboard(code: &str) -> InlineKeyboardMarkup {
     InlineKeyboardMarkup::new([[InlineKeyboardButton::callback(
         "Mark as FR",

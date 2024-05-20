@@ -1,5 +1,4 @@
 use futures_util::StreamExt as _;
-use helper_generator::Helper;
 use kstool::time::get_current_second;
 use log::{error, info};
 use sqlx::{sqlite::SqliteConnectOptions, Connection, SqliteConnection};
@@ -31,8 +30,17 @@ pub mod v1 {
             "session_id" TEXT NOT NULL,
             "last_login" INTEGER NOT NULL,
             "belong" INTEGER NOT NULL,
+            "disabled" INTEGER NOT NULL DEFAULT 0,
             PRIMARY KEY("id")
         );
+
+        CREATE TABLE "history" (
+            "timestamp" INTEGER NOT NULL,
+            "id"        TEXT NOT NULL,
+            "code"      TEXT NOT NULL,
+            "error"     TEXT,
+            PRIMARY KEY "timestamp"
+        )
 
         INSERT INTO "meta" VALUES ('version', '1');
     "#;
@@ -214,14 +222,14 @@ impl Database {
         Ok(())
     }
 
-    pub async fn set_cookie(
+    pub async fn cookie_set(
         &mut self,
         user: i64,
         csrf: &str,
         session: &str,
         id: &str,
     ) -> DBResult<bool> {
-        match self.query_cookie(id).await? {
+        match self.cookie_query(id).await? {
             Some(cookie) => {
                 if cookie.belong() != user {
                     return Ok(false);
@@ -234,7 +242,7 @@ impl Database {
                     .await?;
             }
             None => {
-                sqlx::query(r#"INSERT INTO "cookie" VALUES (?, ?, ?, 0, ?)"#)
+                sqlx::query(r#"INSERT INTO "cookie" VALUES (?, ?, ?, 0, ?, 0)"#)
                     .bind(id)
                     .bind(csrf)
                     .bind(session)
@@ -246,11 +254,73 @@ impl Database {
         Ok(true)
     }
 
-    pub async fn query_cookie(&mut self, id: &str) -> DBResult<Option<Cookie>> {
+    pub async fn cookie_usable(&mut self, id: &str, usable: bool) -> DBResult<()> {
+        sqlx::query(r#"UPDATE "cookie" SET "disabled" = ? WHERE "id" = ?"#)
+            .bind(usable)
+            .bind(id)
+            .execute(&mut self.conn)
+            .await?;
+        Ok(())
+    }
+
+    pub async fn cookie_query(&mut self, id: &str) -> DBResult<Option<Cookie>> {
         sqlx::query_as(r#"SELECT * FROM "cookie" WHERE "id" = ?"#)
             .bind(id)
             .fetch_optional(&mut self.conn)
             .await
+    }
+
+    pub async fn cookie_query_all(&mut self) -> DBResult<Vec<Cookie>> {
+        sqlx::query_as(r#"SELECT* FROM "cookie"  WHERE "disabled" = 0"#)
+            .fetch_all(&mut self.conn)
+            .await
+    }
+
+    pub async fn v_query(&mut self) -> DBResult<Option<VStats>> {
+        Ok(
+            sqlx::query_as::<_, MetaRow>(r#"SELECT * FROM "meta" WHERE "key" = 'intel_v'"#)
+                .fetch_optional(&mut self.conn)
+                .await?
+                .and_then(|s| serde_json::from_str(s.value()).ok()),
+        )
+    }
+
+    pub async fn v_update(&mut self, v: String) -> DBResult<()> {
+        if let Some(db_v) = self.v_query().await? {
+            if v.eq(db_v.v()) {
+                return Ok(());
+            }
+            sqlx::query(r#"UPDATE "meta" SET "value" = ? WHERE "key" = 'intel_v'"#)
+                .bind(VStats::new(v).json())
+                .execute(&mut self.conn)
+                .await
+        } else {
+            sqlx::query(r#"INSERT INTO "meta" VALUES ('intel_v', ?)"#)
+                .bind(VStats::new(v).json())
+                .execute(&mut self.conn)
+                .await
+        }?;
+        Ok(())
+    }
+
+    pub async fn log_add(&mut self, id: &str, code: &str, error: Option<String>) -> DBResult<()> {
+        sqlx::query(r#"INSERT INTO "history" VALUES (?, ?, ?, ?)"#)
+            .bind(kstool::time::get_current_second() as i64)
+            .bind(id)
+            .bind(code)
+            .bind(error)
+            .execute(&mut self.conn)
+            .await?;
+        Ok(())
+    }
+
+    pub async fn log_query(&mut self, id: &str) -> DBResult<Vec<HistoryRow>> {
+        sqlx::query_as(
+            r#"SELECT * FROM "history" WHERE "id" = ? ORDER BY "timestamp" DESC LIMIT 20"#,
+        )
+        .bind(id)
+        .fetch_all(&mut self.conn)
+        .await
     }
 
     pub async fn close(self) -> DBResult<()> {
@@ -268,38 +338,47 @@ impl DatabaseCheckExt for Database {
 pub type DBCallSender<T> = tokio::sync::oneshot::Sender<T>;
 //pub type DBCallback<T> = tokio::sync::oneshot::Receiver<T>;
 
-#[derive(Debug, Helper)]
+kstool_helper_generator::oneshot_helper! {
+#[derive(Debug)]
 pub enum DatabaseEvent {
+    #[ret(bool)]
     UserAdd {
-        user: i64,
-        callback: DBCallSender<bool>,
+        user: i64
     },
+    #[ret(())]
     UserApprove {
         user: i64,
-        callback: DBCallSender<()>,
     },
+    #[ret(())]
     UserRevoke {
         user: i64,
-        callback: DBCallSender<()>,
     },
+    #[ret(bool)]
     UserQuery {
         user: i64,
-        callback: DBCallSender<bool>,
     },
+    #[ret(Option<CodeRow>)]
     CodeQuery {
         code: String,
-        callback: DBCallSender<Option<CodeRow>>,
     },
+    #[ret(())]
     CodeAdd {
         code: String,
         message_id: i32,
-        callback: DBCallSender<()>,
     },
+    #[ret(Option<CodeRow>)]
     CodeFR {
-        code: String,
-        callback: DBCallSender<Option<CodeRow>>,
+        code: String
     },
+    #[ret(Vec<Cookie>)]
+    CookieQueryAll,
+
+    #[ret(())]
+    VUpdate {v: String},
+    #[ret(Option<VStats>)]
+    VQuery,
     Terminate,
+}
 }
 
 pub struct DatabaseHandle {
@@ -330,42 +409,63 @@ impl DatabaseHandle {
     async fn run(mut database: Database, mut receiver: DatabaseEventReceiver) -> DBResult<()> {
         while let Some(event) = receiver.recv().await {
             match event {
-                DatabaseEvent::UserAdd { user, callback } => {
+                DatabaseEvent::UserAdd {
+                    user,
+                    __private_sender,
+                } => {
                     let u = database.query_user(user).await?;
                     if u.is_none() {
                         database.insert_user(user, false).await?;
                         info!("Add user {} to database", user);
                     }
-                    callback.send(u.is_none()).ok();
+                    __private_sender.send(u.is_none()).ok();
                 }
-                DatabaseEvent::UserApprove { user, callback } => {
+                DatabaseEvent::UserApprove {
+                    user,
+                    __private_sender,
+                } => {
                     database.set_authorized_status(user, true).await?;
-                    callback.send(()).ok();
+                    __private_sender.send(()).ok();
                 }
-                DatabaseEvent::UserRevoke { user, callback } => {
+                DatabaseEvent::UserRevoke {
+                    user,
+                    __private_sender,
+                } => {
                     database.set_authorized_status(user, false).await?;
-                    callback.send(()).ok();
+                    __private_sender.send(()).ok();
                 }
 
                 DatabaseEvent::CodeAdd {
                     code,
-                    callback,
+
                     message_id,
+                    __private_sender,
                 } => {
                     database.insert_code(&code, message_id).await?;
-                    callback.send(()).ok();
+                    __private_sender.send(()).ok();
                 }
-                DatabaseEvent::CodeFR { code, callback } => {
+                DatabaseEvent::CodeFR {
+                    code,
+                    __private_sender,
+                } => {
                     database.set_code_fr(&code, true).await?;
                     let code = database.query_code(&code).await?;
-                    callback.send(code).ok();
+                    __private_sender.send(code).ok();
                 }
-                DatabaseEvent::CodeQuery { code, callback } => {
-                    callback.send(database.query_code(&code).await?).ok();
+                DatabaseEvent::CodeQuery {
+                    code,
+                    __private_sender,
+                } => {
+                    __private_sender
+                        .send(database.query_code(&code).await?)
+                        .ok();
                 }
                 DatabaseEvent::Terminate => break,
-                DatabaseEvent::UserQuery { user, callback } => {
-                    callback
+                DatabaseEvent::UserQuery {
+                    user,
+                    __private_sender,
+                } => {
+                    __private_sender
                         .send(
                             database
                                 .query_user(user)
@@ -374,6 +474,19 @@ impl DatabaseHandle {
                                 .unwrap_or(false),
                         )
                         .ok();
+                }
+                DatabaseEvent::CookieQueryAll(sender) => {
+                    sender.send(database.cookie_query_all().await?).ok();
+                }
+                DatabaseEvent::VUpdate {
+                    v,
+                    __private_sender,
+                } => {
+                    __private_sender.send(database.v_update(v).await?).ok();
+                }
+
+                DatabaseEvent::VQuery(sender) => {
+                    sender.send(database.v_query().await?).ok();
                 }
             }
         }
@@ -386,63 +499,11 @@ impl DatabaseHandle {
     }
 }
 
-#[derive(Clone, Debug)]
-pub struct DatabaseOperator(DatabaseHelper);
-
-impl DatabaseOperator {
-    pub async fn user_add(&self, user: i64) -> Option<bool> {
-        let (s, r) = oneshot::channel();
-        self.0.user_add(user, s).await?;
-        r.await.ok()
-    }
-    pub async fn user_approve(&self, user: i64) -> Option<()> {
-        let (s, r) = oneshot::channel();
-        self.0.user_approve(user, s).await?;
-        r.await.ok()
-    }
-
-    pub async fn user_revoke(&self, user: i64) -> Option<()> {
-        let (s, r) = oneshot::channel();
-        self.0.user_revoke(user, s).await?;
-        r.await.ok()
-    }
-
-    pub async fn code_query(&self, code: String) -> Option<CodeRow> {
-        let (s, r) = oneshot::channel();
-        self.0.code_query(code, s).await?;
-        r.await.ok().flatten()
-    }
-
-    pub async fn code_insert(&self, code: String, message_id: i32) -> Option<()> {
-        let (s, r) = oneshot::channel();
-        self.0.code_add(code, message_id, s).await?;
-        r.await.ok()
-    }
-
-    pub async fn user_query(&self, user: i64) -> Option<bool> {
-        let (s, r) = oneshot::channel();
-        self.0.user_query(user, s).await?;
-        r.await.ok()
-    }
-
-    pub async fn code_fr(&self, code: String) -> Option<CodeRow> {
-        let (s, r) = oneshot::channel();
-        self.0.code_f_r(code, s).await?;
-        r.await.ok().flatten()
-    }
-}
-
-impl From<DatabaseHelper> for DatabaseOperator {
-    fn from(value: DatabaseHelper) -> Self {
-        Self(value)
-    }
-}
-
 pub type DBResult<T> = sqlx::Result<T>;
 use tap::TapOptional;
-use tokio::sync::{broadcast, oneshot};
+use tokio::sync::broadcast;
 pub use v1 as current;
 
-use crate::types::{CodeRow, Cookie, User};
+use crate::types::{CodeRow, Cookie, HistoryRow, MetaRow, User, VStats};
 
 pub use current::BroadcastEvent;
