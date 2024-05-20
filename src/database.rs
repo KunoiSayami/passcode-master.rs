@@ -263,6 +263,15 @@ impl Database {
         Ok(())
     }
 
+    pub async fn cookie_update_timestamp(&mut self, id: &str) -> DBResult<()> {
+        sqlx::query(r#"UPDATE "cookie" SET "last_login" = ? WHERE "id" = ?"#)
+            .bind(kstool::time::get_current_second() as i64)
+            .bind(id)
+            .execute(&mut self.conn)
+            .await?;
+        Ok(())
+    }
+
     pub async fn cookie_query(&mut self, id: &str) -> DBResult<Option<Cookie>> {
         sqlx::query_as(r#"SELECT * FROM "cookie" WHERE "id" = ?"#)
             .bind(id)
@@ -370,13 +379,25 @@ pub enum DatabaseEvent {
     CodeFR {
         code: String
     },
+
     #[ret(Vec<Cookie>)]
     CookieQueryAll,
 
     #[ret(())]
+    CookieToggle {id: String, usable: bool},
+
+    #[ret(bool)]
+    CookieSet {user: i64, id: String, csrf: String, session: String},
+
+    #[ret(())]
+    CookieUpdateTimestamp(String),
+
+    #[ret(())]
     VUpdate {v: String},
+
     #[ret(Option<VStats>)]
     VQuery,
+
     Terminate,
 }
 }
@@ -488,6 +509,27 @@ impl DatabaseHandle {
                 DatabaseEvent::VQuery(sender) => {
                     sender.send(database.v_query().await?).ok();
                 }
+                DatabaseEvent::CookieToggle {
+                    id,
+                    usable,
+                    __private_sender,
+                } => {
+                    __private_sender
+                        .send(database.cookie_usable(&id, usable).await?)
+                        .ok();
+                }
+                DatabaseEvent::CookieSet {
+                    user,
+                    id,
+                    csrf,
+                    session,
+                    __private_sender,
+                } => {
+                    __private_sender
+                        .send(database.cookie_set(user, &csrf, &session, &id).await?)
+                        .ok();
+                }
+                DatabaseEvent::CookieUpdateTimestamp(id, sender) => {}
             }
         }
         database.close().await?;

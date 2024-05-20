@@ -62,9 +62,10 @@ impl Cookie {
         &self.id
     }
 
-    pub fn last_login(&self) -> i64 {
-        self.last_login
+    pub fn login_recently(&self, limit: i64) -> bool {
+        kstool::time::get_current_second() as i64 - self.last_login < limit
     }
+
     pub fn belong(&self) -> i64 {
         self.belong
     }
