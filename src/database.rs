@@ -213,15 +213,6 @@ impl Database {
         }
     }
 
-    pub async fn update_last_time(&mut self, id: &str) -> DBResult<()> {
-        sqlx::query(r#"UPDATE "cookie" SET "last_login" = ? WHERE "id" = ?"#)
-            .bind(get_current_second() as i64)
-            .bind(id)
-            .execute(&mut self.conn)
-            .await?;
-        Ok(())
-    }
-
     pub async fn cookie_set(
         &mut self,
         user: i64,
@@ -344,7 +335,7 @@ impl DatabaseCheckExt for Database {
     }
 }
 
-pub type DBCallSender<T> = tokio::sync::oneshot::Sender<T>;
+//pub type DBCallSender<T> = tokio::sync::oneshot::Sender<T>;
 //pub type DBCallback<T> = tokio::sync::oneshot::Receiver<T>;
 
 kstool_helper_generator::oneshot_helper! {
@@ -394,6 +385,15 @@ pub enum DatabaseEvent {
 
     #[ret(())]
     VUpdate {v: String},
+
+    LogInsert {
+        id: String,
+        code: String,
+        error: Option<String>
+    },
+
+    #[ret(Vec<HistoryRow>)]
+    LogQuery {id: String},
 
     #[ret(Option<VStats>)]
     VQuery,
@@ -529,7 +529,20 @@ impl DatabaseHandle {
                         .send(database.cookie_set(user, &csrf, &session, &id).await?)
                         .ok();
                 }
-                DatabaseEvent::CookieUpdateTimestamp(id, sender) => {}
+                DatabaseEvent::CookieUpdateTimestamp(id, sender) => {
+                    sender
+                        .send(database.cookie_update_timestamp(&id).await?)
+                        .ok();
+                }
+                DatabaseEvent::LogInsert { id, code, error } => {
+                    database.log_add(&id, &code, error).await?;
+                }
+                DatabaseEvent::LogQuery {
+                    id,
+                    __private_sender,
+                } => {
+                    __private_sender.send(database.log_query(&id).await?).ok();
+                }
             }
         }
         database.close().await?;
