@@ -1,5 +1,6 @@
 use std::sync::Arc;
 
+use anyhow::anyhow;
 use log::warn;
 use teloxide::{
     dispatching::{Dispatcher, HandlerExt, UpdateFilterExt},
@@ -22,6 +23,8 @@ use crate::{config::Config, database::DatabaseHelper};
 #[command(rename_rule = "lowercase")]
 enum Command {
     Auth,
+    Cookie { ops: String },
+    Log { id: String },
 }
 
 #[derive(Clone, Debug)]
@@ -50,6 +53,11 @@ impl NecessaryArg {
 
     pub fn target(&self) -> ChatId {
         ChatId(self.target)
+    }
+
+    pub async fn check_auth(&self, id: ChatId) -> bool {
+        self.admin().iter().any(|x| &id == x)
+            || self.database().user_query(id.0).await.unwrap_or(false)
     }
 }
 
@@ -86,6 +94,36 @@ impl<'a> ReadableCallbackQuery<'a> {
     }
 }
 
+#[derive(Debug)]
+pub enum CookieOps<'a> {
+    Toggle(&'a str, bool),
+    Modify(&'a str, &'a str, &'a str),
+}
+
+impl<'a> TryFrom<&'a str> for CookieOps<'a> {
+    type Error = anyhow::Error;
+
+    fn try_from(value: &'a str) -> Result<Self, Self::Error> {
+        if !value.contains(' ') {
+            return Err(anyhow!("Missing space"));
+        }
+        let group = value.split(' ').collect::<Vec<_>>();
+        if !match group[0] {
+            "enable" | "disable" => group.len() > 1,
+            "modify" | "add" => group.len() > 3,
+            _ => false,
+        } {
+            return Err(anyhow!("Mismatch argument count / Unknown ops"));
+        }
+        let arg = match group[0] {
+            "enable" | "disable" => Self::Toggle(group[1], group[0].eq("enable")),
+            "modify" | "add" => Self::Modify(group[1], group[2], group[3]),
+            _ => unreachable!(),
+        };
+        Ok(arg)
+    }
+}
+
 pub fn bot(config: &Config) -> anyhow::Result<Bot> {
     let bot = Bot::new(config.platform().key());
     Ok(match config.platform().server() {
@@ -109,8 +147,14 @@ pub async fn bot_run(config: Config, database: DatabaseHelper) -> anyhow::Result
                 .filter(|msg: Message| msg.chat.is_private())
                 .filter_command::<Command>()
                 .endpoint(
-                    |msg: Message, bot: Bot, arg: Arc<NecessaryArg>| async move {
-                        handle_auth_command(bot, arg, msg).await
+                    |msg: Message, bot: Bot, arg: Arc<NecessaryArg>, cmd: Command| async move {
+                        match cmd {
+                            Command::Auth => handle_auth_command(bot, arg, msg).await,
+                            Command::Cookie { ops } => {
+                                handle_cookie_command(bot, arg, msg, ops).await
+                            }
+                            Command::Log { id } => handle_log_command(bot, msg, arg, id).await,
+                        }
                     },
                 ),
         )
@@ -168,14 +212,76 @@ pub async fn handle_auth_command(
     Ok(())
 }
 
+pub async fn handle_cookie_command(
+    bot: Bot,
+    arg: Arc<NecessaryArg>,
+    msg: Message,
+    ops: String,
+) -> anyhow::Result<()> {
+    if !arg.check_auth(msg.chat.id).await {
+        return Ok(());
+    }
+    let ops = match CookieOps::try_from(ops.as_str()) {
+        Ok(ops) => ops,
+        Err(e) => {
+            log::error!("Cookie arg: {:?}", e);
+            return Ok(());
+        }
+    };
+    match ops {
+        CookieOps::Toggle(id, enabled) => {
+            arg.database().cookie_toggle(id.to_string(), enabled).await;
+
+            bot.send_message(msg.chat.id, format!("Toggle {} to {}", id, enabled))
+                .await?;
+        }
+        CookieOps::Modify(id, csrf, session) => {
+            arg.database()
+                .cookie_set(
+                    msg.chat.id.0,
+                    id.to_string(),
+                    csrf.to_string(),
+                    session.to_string(),
+                )
+                .await;
+
+            bot.send_message(msg.chat.id, format!("Updated {} cookie", id))
+                .await?;
+        }
+    }
+    Ok(())
+}
+
+pub async fn handle_log_command(
+    bot: Bot,
+    msg: Message,
+    arg: Arc<NecessaryArg>,
+    id: String,
+) -> anyhow::Result<()> {
+    if id.contains(' ') || !arg.check_auth(msg.chat.id).await {
+        return Ok(());
+    }
+    match arg.database().log_query(id).await {
+        Some(v) => {
+            bot.send_message(
+                msg.chat.id,
+                v.iter()
+                    .map(|entry| entry.to_string())
+                    .collect::<Vec<_>>()
+                    .join("\n"),
+            )
+            .await?;
+        }
+        None => {
+            bot.send_message(msg.chat.id, "_Nothing to display_")
+                .await?;
+        }
+    }
+    Ok(())
+}
+
 pub async fn handle_message(bot: Bot, msg: Message, arg: Arc<NecessaryArg>) -> anyhow::Result<()> {
-    if !arg.admin().iter().any(|x| &msg.chat.id == x)
-        && !arg
-            .database()
-            .user_query(msg.chat.id.0)
-            .await
-            .unwrap_or(false)
-    {
+    if !arg.check_auth(msg.chat.id).await {
         return Ok(());
     }
     let code = msg.text().unwrap();

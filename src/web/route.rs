@@ -40,7 +40,7 @@ pub async fn route(
     axum::serve(listener, router)
         .with_graceful_shutdown(async move {
             let mut recv = broadcast.resubscribe();
-            while let Ok(BroadcastEvent::Exit) = recv.recv().await {}
+            while let Ok(BroadcastEvent::NewCode(_)) = recv.recv().await {}
             tokio::time::sleep(tokio::time::Duration::from_millis(200)).await;
         })
         .await?;

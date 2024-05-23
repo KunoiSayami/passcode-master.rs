@@ -1,4 +1,5 @@
 use argon2::{Argon2, PasswordVerifier};
+use chrono::DateTime;
 use serde::{Deserialize, Serialize};
 use sqlx::prelude::FromRow;
 
@@ -121,6 +122,13 @@ impl HistoryRow {
         self.timestamp
     }
 
+    pub fn time(&self) -> String {
+        let time = DateTime::from_timestamp(self.timestamp(), 0).unwrap();
+        time.with_timezone(&chrono_tz::Asia::Taipei)
+            .format("%Y-%m-%d %H:%M")
+            .to_string()
+    }
+
     pub fn id(&self) -> &str {
         &self.id
     }
@@ -129,8 +137,21 @@ impl HistoryRow {
         &self.code
     }
 
-    pub fn error(&self) -> Option<&String> {
-        self.error.as_ref()
+    pub fn error(&self) -> Option<&str> {
+        self.error.as_deref()
+    }
+}
+
+impl std::fmt::Display for HistoryRow {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "[{}] {} {} {}",
+            self.time(),
+            self.id(),
+            self.code(),
+            self.error().unwrap_or("N/A")
+        )
     }
 }
 
