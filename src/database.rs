@@ -1,5 +1,4 @@
 use futures_util::StreamExt as _;
-use kstool::time::get_current_second;
 use log::{error, info};
 use sqlx::{sqlite::SqliteConnectOptions, Connection, SqliteConnection};
 
@@ -30,7 +29,7 @@ pub mod v1 {
             "session_id" TEXT NOT NULL,
             "last_login" INTEGER NOT NULL,
             "belong" INTEGER NOT NULL,
-            "disabled" INTEGER NOT NULL DEFAULT 0,
+            "enabled" INTEGER NOT NULL DEFAULT 1,
             PRIMARY KEY("id")
         );
 
@@ -138,7 +137,7 @@ impl Database {
         self.check_database_version().await
     }
 
-    pub async fn check_auth(&mut self, user: i64) -> sqlx::Result<bool> {
+    pub async fn _check_auth(&mut self, user: i64) -> sqlx::Result<bool> {
         if user < 0 {
             return Ok(false);
         }
@@ -233,7 +232,7 @@ impl Database {
                     .await?;
             }
             None => {
-                sqlx::query(r#"INSERT INTO "cookie" VALUES (?, ?, ?, 0, ?, 0)"#)
+                sqlx::query(r#"INSERT INTO "cookie" VALUES (?, ?, ?, 0, ?, 1)"#)
                     .bind(id)
                     .bind(csrf)
                     .bind(session)
@@ -246,7 +245,7 @@ impl Database {
     }
 
     pub async fn cookie_usable(&mut self, id: &str, usable: bool) -> DBResult<()> {
-        sqlx::query(r#"UPDATE "cookie" SET "disabled" = ? WHERE "id" = ?"#)
+        sqlx::query(r#"UPDATE "cookie" SET "enabled" = ? WHERE "id" = ?"#)
             .bind(usable)
             .bind(id)
             .execute(&mut self.conn)
@@ -271,7 +270,7 @@ impl Database {
     }
 
     pub async fn cookie_query_all(&mut self) -> DBResult<Vec<Cookie>> {
-        sqlx::query_as(r#"SELECT* FROM "cookie"  WHERE "disabled" = 0"#)
+        sqlx::query_as(r#"SELECT* FROM "cookie"  WHERE "enabled" = 1"#)
             .fetch_all(&mut self.conn)
             .await
     }

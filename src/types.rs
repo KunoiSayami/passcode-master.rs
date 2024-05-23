@@ -2,6 +2,7 @@ use argon2::{Argon2, PasswordVerifier};
 use chrono::DateTime;
 use serde::{Deserialize, Serialize};
 use sqlx::prelude::FromRow;
+use teloxide::types::ChatId;
 
 #[derive(Clone, Copy, Debug, FromRow)]
 pub struct User {
@@ -47,7 +48,7 @@ pub struct Cookie {
     session_id: String,
     last_login: i64,
     belong: i64,
-    disabled: bool,
+    enabled: bool,
 }
 
 impl Cookie {
@@ -71,8 +72,12 @@ impl Cookie {
         self.belong
     }
 
-    pub fn disabled(&self) -> bool {
-        self.disabled
+    pub fn belong_chat(&self) -> ChatId {
+        ChatId(self.belong)
+    }
+
+    pub fn enabled(&self) -> bool {
+        self.enabled
     }
 }
 
@@ -164,14 +169,6 @@ pub struct MetaRow {
 impl MetaRow {
     pub fn value(&self) -> &str {
         &self.value
-    }
-
-    pub fn key(&self) -> &str {
-        &self.key
-    }
-
-    pub fn into_value(self) -> String {
-        self.value
     }
 }
 

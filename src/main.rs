@@ -23,9 +23,11 @@ async fn async_main(config: String) -> anyhow::Result<()> {
 
     let web = tokio::spawn(web::route(config.clone(), broadcast.resubscribe()));
 
-    let code_master = private::CodeStaff::start(operator.clone(), broadcast);
+    let bot = platform::bot(&config)?;
 
-    bot_run(config, operator.clone().into()).await?;
+    let code_master = private::CodeStaff::start(bot.clone(), operator.clone(), broadcast);
+
+    bot_run(bot, config, operator.clone().into()).await?;
 
     operator.terminate().await;
 

@@ -3,6 +3,7 @@ use std::sync::Arc;
 use anyhow::anyhow;
 use log::warn;
 use teloxide::{
+    adaptors::DefaultParseMode,
     dispatching::{Dispatcher, HandlerExt, UpdateFilterExt},
     macros::BotCommands,
     payloads::SendMessageSetters,
@@ -14,8 +15,6 @@ use teloxide::{
     },
     Bot,
 };
-
-use atoi::FromRadix10SignedChecked;
 
 use crate::{config::Config, database::DatabaseHelper};
 
@@ -86,7 +85,8 @@ impl<'a> ReadableCallbackQuery<'a> {
     }
 
     pub fn target_i64(&self) -> Option<i64> {
-        let (n, index) = i64::from_radix_10_signed_checked(self.target.as_bytes());
+        let (n, index) =
+            atoi::FromRadix10SignedChecked::from_radix_10_signed_checked(self.target.as_bytes());
         if index == 0 || index != self.target.len() {
             return None;
         }
@@ -124,17 +124,20 @@ impl<'a> TryFrom<&'a str> for CookieOps<'a> {
     }
 }
 
-pub fn bot(config: &Config) -> anyhow::Result<Bot> {
+pub fn bot(config: &Config) -> anyhow::Result<DefaultParseMode<Bot>> {
     let bot = Bot::new(config.platform().key());
     Ok(match config.platform().server() {
         Some(url) => bot.set_api_url(url.parse()?),
         None => bot,
-    })
+    }
+    .parse_mode(ParseMode::MarkdownV2))
 }
 
-pub async fn bot_run(config: Config, database: DatabaseHelper) -> anyhow::Result<()> {
-    let bot = bot(&config)?.parse_mode(ParseMode::MarkdownV2);
-
+pub async fn bot_run(
+    bot: DefaultParseMode<Bot>,
+    config: Config,
+    database: DatabaseHelper,
+) -> anyhow::Result<()> {
     let arg = Arc::new(NecessaryArg::new(
         database,
         config.admin().iter().map(|u| ChatId(*u)).collect(),
