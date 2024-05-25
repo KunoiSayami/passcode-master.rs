@@ -2,7 +2,6 @@ use clap::arg;
 use config::Config;
 use database::DatabaseHandle;
 use log::error;
-use platform::bot_run;
 use tap::TapFallible;
 
 mod config;
@@ -27,7 +26,7 @@ async fn async_main(config: String) -> anyhow::Result<()> {
 
     let code_master = private::CodeStaff::start(bot.clone(), operator.clone(), broadcast);
 
-    bot_run(bot, config, operator.clone().into()).await?;
+    platform::bot_run(bot, config, operator.clone().into()).await?;
 
     operator.terminate().await;
 
