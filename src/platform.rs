@@ -190,23 +190,24 @@ pub async fn bot_run(bot: BotType, config: Config, database: DatabaseHelper) -> 
                 handle_callback_query(bot, q, arg).await
             },
         );
-    let mut dispatcher = Dispatcher::builder(
+    let dispatcher = Dispatcher::builder(
         bot,
         dptree::entry()
             .branch(handle_message)
             .branch(handle_callback_query),
     )
     .dependencies(dptree::deps![arg])
-    .default_handler(|_| async {})
-    .build();
+    .default_handler(|_| async {});
 
+    #[cfg(not(debug_assertions))]
+    dispatcher.enable_ctrlc_handler().build().dispatch().await;
+
+    #[cfg(debug_assertions)]
     tokio::select! {
-        _ = dispatcher.dispatch() => {
-
-        }
-        _ = tokio::signal::ctrl_c() => {
-
-        }
+        _ = async move {
+            dispatcher.build().dispatch().await
+        } => {}
+        _ = tokio::signal::ctrl_c() => {}
     }
     Ok(())
 }

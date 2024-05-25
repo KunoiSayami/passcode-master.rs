@@ -4,6 +4,7 @@ use serde::{Deserialize, Serialize};
 use sqlx::prelude::FromRow;
 use teloxide::types::ChatId;
 
+#[allow(dead_code)]
 #[derive(Clone, Copy, Debug, FromRow)]
 pub struct User {
     id: i64,
@@ -11,10 +12,6 @@ pub struct User {
 }
 
 impl User {
-    pub fn id(&self) -> i64 {
-        self.id
-    }
-
     pub fn authorized(&self) -> bool {
         self.authorized == 1
     }
@@ -41,6 +38,7 @@ impl CodeRow {
     }
 }
 
+#[allow(dead_code)]
 #[derive(Clone, Debug, FromRow)]
 pub struct Cookie {
     id: String,
@@ -74,10 +72,6 @@ impl Cookie {
 
     pub fn belong_chat(&self) -> ChatId {
         ChatId(self.belong)
-    }
-
-    pub fn enabled(&self) -> bool {
-        self.enabled
     }
 }
 
@@ -160,6 +154,7 @@ impl std::fmt::Display for HistoryRow {
     }
 }
 
+#[allow(dead_code)]
 #[derive(Clone, Debug, FromRow)]
 pub struct MetaRow {
     key: String,
