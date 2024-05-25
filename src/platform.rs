@@ -2,11 +2,12 @@ use std::sync::Arc;
 
 use anyhow::anyhow;
 use log::warn;
+use tap::TapFallible;
 use teloxide::{
     adaptors::DefaultParseMode,
     dispatching::{Dispatcher, HandlerExt, UpdateFilterExt},
     macros::BotCommands,
-    payloads::SendMessageSetters,
+    payloads::{EditMessageTextSetters, SendMessageSetters},
     prelude::dptree,
     requests::{Requester, RequesterExt},
     types::{
@@ -55,8 +56,18 @@ impl NecessaryArg {
     }
 
     pub async fn check_auth(&self, id: ChatId) -> bool {
-        self.admin().iter().any(|x| &id == x)
-            || self.database().user_query(id.0).await.unwrap_or(false)
+        self.check_admin(id)
+            || self
+                .database()
+                .user_query(id.0)
+                .await
+                .flatten()
+                .map(|u| u.authorized())
+                .unwrap_or(false)
+    }
+
+    pub fn check_admin(&self, id: ChatId) -> bool {
+        self.admin.iter().any(|x| &id == x)
     }
 }
 
@@ -76,7 +87,7 @@ impl<'a> ReadableCallbackQuery<'a> {
         if !right.contains(' ') {
             return None;
         }
-        let (action, target) = data.split_once(' ').unwrap();
+        let (action, target) = right.split_once(' ').unwrap();
         Some(Self {
             action,
             target,
@@ -124,7 +135,7 @@ impl<'a> TryFrom<&'a str> for CookieOps<'a> {
     }
 }
 
-pub fn bot(config: &Config) -> anyhow::Result<DefaultParseMode<Bot>> {
+pub fn bot(config: &Config) -> anyhow::Result<BotType> {
     let bot = Bot::new(config.platform().key());
     Ok(match config.platform().server() {
         Some(url) => bot.set_api_url(url.parse()?),
@@ -133,11 +144,9 @@ pub fn bot(config: &Config) -> anyhow::Result<DefaultParseMode<Bot>> {
     .parse_mode(ParseMode::MarkdownV2))
 }
 
-pub async fn bot_run(
-    bot: DefaultParseMode<Bot>,
-    config: Config,
-    database: DatabaseHelper,
-) -> anyhow::Result<()> {
+pub type BotType = DefaultParseMode<Bot>;
+
+pub async fn bot_run(bot: BotType, config: Config, database: DatabaseHelper) -> anyhow::Result<()> {
     let arg = Arc::new(NecessaryArg::new(
         database,
         config.admin().iter().map(|u| ChatId(*u)).collect(),
@@ -150,7 +159,7 @@ pub async fn bot_run(
                 .filter(|msg: Message| msg.chat.is_private())
                 .filter_command::<Command>()
                 .endpoint(
-                    |msg: Message, bot: Bot, arg: Arc<NecessaryArg>, cmd: Command| async move {
+                    |msg: Message, bot: BotType, arg: Arc<NecessaryArg>, cmd: Command| async move {
                         match cmd {
                             Command::Auth => handle_auth_command(bot, arg, msg).await,
                             Command::Cookie { ops } => {
@@ -158,14 +167,17 @@ pub async fn bot_run(
                             }
                             Command::Log { id } => handle_log_command(bot, msg, arg, id).await,
                         }
+                        .tap_err(|e| log::error!("Handle command error: {:?}", e))
                     },
                 ),
         )
         .branch(
             dptree::entry()
-                .filter(|msg: Message| msg.chat.is_private() && msg.text().is_some())
+                .filter(|msg: Message| {
+                    msg.chat.is_private() && msg.text().is_some_and(|s| !s.starts_with('/'))
+                })
                 .endpoint(
-                    |msg: Message, bot: Bot, arg: Arc<NecessaryArg>| async move {
+                    |msg: Message, bot: BotType, arg: Arc<NecessaryArg>| async move {
                         handle_message(bot, msg, arg).await
                     },
                 ),
@@ -174,30 +186,44 @@ pub async fn bot_run(
     let handle_callback_query = Update::filter_callback_query()
         .filter(|q: CallbackQuery| q.data.is_some())
         .endpoint(
-            |q: CallbackQuery, bot: Bot, arg: Arc<NecessaryArg>| async move {
+            |q: CallbackQuery, bot: BotType, arg: Arc<NecessaryArg>| async move {
                 handle_callback_query(bot, q, arg).await
             },
         );
-    Dispatcher::builder(
+    let mut dispatcher = Dispatcher::builder(
         bot,
         dptree::entry()
             .branch(handle_message)
             .branch(handle_callback_query),
     )
     .dependencies(dptree::deps![arg])
-    .enable_ctrlc_handler()
-    .build()
-    .dispatch()
-    .await;
+    .default_handler(|_| async {})
+    .build();
+
+    tokio::select! {
+        _ = dispatcher.dispatch() => {
+
+        }
+        _ = tokio::signal::ctrl_c() => {
+
+        }
+    }
     Ok(())
 }
 
 pub async fn handle_auth_command(
-    bot: Bot,
+    bot: BotType,
     arg: Arc<NecessaryArg>,
     msg: Message,
 ) -> anyhow::Result<()> {
-    if arg.database().user_query(msg.chat.id.0).await.is_some() {
+    if arg.check_admin(msg.chat.id)
+        || arg
+            .database()
+            .user_query(msg.chat.id.0)
+            .await
+            .flatten()
+            .is_some()
+    {
         return Ok(());
     }
     for admin in arg.admin() {
@@ -216,7 +242,7 @@ pub async fn handle_auth_command(
 }
 
 pub async fn handle_cookie_command(
-    bot: Bot,
+    bot: BotType,
     arg: Arc<NecessaryArg>,
     msg: Message,
     ops: String,
@@ -256,7 +282,7 @@ pub async fn handle_cookie_command(
 }
 
 pub async fn handle_log_command(
-    bot: Bot,
+    bot: BotType,
     msg: Message,
     arg: Arc<NecessaryArg>,
     id: String,
@@ -283,7 +309,11 @@ pub async fn handle_log_command(
     Ok(())
 }
 
-pub async fn handle_message(bot: Bot, msg: Message, arg: Arc<NecessaryArg>) -> anyhow::Result<()> {
+pub async fn handle_message(
+    bot: BotType,
+    msg: Message,
+    arg: Arc<NecessaryArg>,
+) -> anyhow::Result<()> {
     if !arg.check_auth(msg.chat.id).await {
         return Ok(());
     }
@@ -308,7 +338,7 @@ pub async fn handle_message(bot: Bot, msg: Message, arg: Arc<NecessaryArg>) -> a
 }
 
 pub async fn handle_callback_query(
-    bot: Bot,
+    bot: BotType,
     msg: CallbackQuery,
     arg: Arc<NecessaryArg>,
 ) -> anyhow::Result<()> {
@@ -324,6 +354,8 @@ pub async fn handle_callback_query(
                 "auth" => {
                     if let Some(id) = cq.target_i64() {
                         arg.database().user_approve(id).await;
+                        bot.send_message(ChatId(id), "Talk power granted").await?;
+                        log::debug!("Grant {} power", id);
                     }
                 }
                 "reject" => {
@@ -339,8 +371,9 @@ pub async fn handle_callback_query(
                         bot.edit_message_text(
                             arg.target(),
                             MessageId(code.message_id()),
-                            format!("~~{}~~", code.code()),
+                            format!("<del>{}</del>", code.code()),
                         )
+                        .parse_mode(ParseMode::Html)
                         .await?;
                     }
                 }

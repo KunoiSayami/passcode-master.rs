@@ -38,10 +38,8 @@ pub mod v1 {
             "id"        TEXT NOT NULL,
             "code"      TEXT NOT NULL,
             "error"     TEXT,
-            PRIMARY KEY "timestamp"
-        )
-
-        INSERT INTO "meta" VALUES ('version', '1');
+            PRIMARY KEY("timestamp")
+        );
     "#;
 
     pub const VERSION: &str = "1";
@@ -158,7 +156,7 @@ impl Database {
     }
 
     pub async fn insert_code(&mut self, code: &str, message_id: i32) -> DBResult<()> {
-        sqlx::query(r#"INSERT INTO "codes" VALUES (?, ?)"#)
+        sqlx::query(r#"INSERT INTO "codes" VALUES (?, ?, 0)"#)
             .bind(code)
             .bind(message_id)
             .execute(&mut self.conn)
@@ -196,12 +194,12 @@ impl Database {
     }
 
     pub async fn set_authorized_status(&mut self, user: i64, authorized: bool) -> DBResult<()> {
-        match self.query_user(user).await? {
+        match self.query_user(user).await.tap(|u| log::debug!("{u:?}"))? {
             Some(cur) => {
                 if cur.authorized() == authorized {
                     return Ok(());
                 }
-                sqlx::query(r#"UPDATE "users" SET "authorized" = ? WHERE "user" = ?"#)
+                sqlx::query(r#"UPDATE "users" SET "authorized" = ? WHERE "id" = ?"#)
                     .bind(authorized)
                     .bind(user)
                     .execute(&mut self.conn)
@@ -224,15 +222,17 @@ impl Database {
                 if cookie.belong() != user {
                     return Ok(false);
                 }
-                sqlx::query(r#"UPDATE "cookie" SET "csrf_token"= ?, "session" = ? WHERE "id" = ?"#)
-                    .bind(csrf)
-                    .bind(session)
-                    .bind(id)
-                    .execute(&mut self.conn)
-                    .await?;
+                sqlx::query(
+                    r#"UPDATE "cookies" SET "csrf_token"= ?, "session" = ? WHERE "id" = ?"#,
+                )
+                .bind(csrf)
+                .bind(session)
+                .bind(id)
+                .execute(&mut self.conn)
+                .await?;
             }
             None => {
-                sqlx::query(r#"INSERT INTO "cookie" VALUES (?, ?, ?, 0, ?, 1)"#)
+                sqlx::query(r#"INSERT INTO "cookies" VALUES (?, ?, ?, 0, ?, 1)"#)
                     .bind(id)
                     .bind(csrf)
                     .bind(session)
@@ -245,7 +245,7 @@ impl Database {
     }
 
     pub async fn cookie_usable(&mut self, id: &str, usable: bool) -> DBResult<()> {
-        sqlx::query(r#"UPDATE "cookie" SET "enabled" = ? WHERE "id" = ?"#)
+        sqlx::query(r#"UPDATE "cookies" SET "enabled" = ? WHERE "id" = ?"#)
             .bind(usable)
             .bind(id)
             .execute(&mut self.conn)
@@ -254,7 +254,7 @@ impl Database {
     }
 
     pub async fn cookie_update_timestamp(&mut self, id: &str) -> DBResult<()> {
-        sqlx::query(r#"UPDATE "cookie" SET "last_login" = ? WHERE "id" = ?"#)
+        sqlx::query(r#"UPDATE "cookies" SET "last_login" = ? WHERE "id" = ?"#)
             .bind(kstool::time::get_current_second() as i64)
             .bind(id)
             .execute(&mut self.conn)
@@ -263,14 +263,14 @@ impl Database {
     }
 
     pub async fn cookie_query(&mut self, id: &str) -> DBResult<Option<Cookie>> {
-        sqlx::query_as(r#"SELECT * FROM "cookie" WHERE "id" = ?"#)
+        sqlx::query_as(r#"SELECT * FROM "cookies" WHERE "id" = ?"#)
             .bind(id)
             .fetch_optional(&mut self.conn)
             .await
     }
 
     pub async fn cookie_query_all(&mut self) -> DBResult<Vec<Cookie>> {
-        sqlx::query_as(r#"SELECT* FROM "cookie"  WHERE "enabled" = 1"#)
+        sqlx::query_as(r#"SELECT* FROM "cookies"  WHERE "enabled" = 1"#)
             .fetch_all(&mut self.conn)
             .await
     }
@@ -352,7 +352,7 @@ pub enum DatabaseEvent {
     UserRevoke {
         user: i64,
     },
-    #[ret(bool)]
+    #[ret(Option<User>)]
     UserQuery {
         user: i64,
     },
@@ -426,123 +426,126 @@ impl DatabaseHandle {
         ))
     }
 
+    async fn handle_event(database: &mut Database, event: DatabaseEvent) -> DBResult<()> {
+        match event {
+            DatabaseEvent::UserAdd {
+                user,
+                __private_sender,
+            } => {
+                let u = database.query_user(user).await?;
+                if u.is_none() {
+                    database.insert_user(user, false).await?;
+                    info!("Add user {} to database", user);
+                }
+                __private_sender.send(u.is_none()).ok();
+            }
+            DatabaseEvent::UserApprove {
+                user,
+                __private_sender,
+            } => {
+                database.set_authorized_status(user, true).await?;
+                info!("Approve user {}", user);
+                __private_sender.send(()).ok();
+            }
+            DatabaseEvent::UserRevoke {
+                user,
+                __private_sender,
+            } => {
+                database.set_authorized_status(user, false).await?;
+                __private_sender.send(()).ok();
+            }
+
+            DatabaseEvent::CodeAdd {
+                code,
+
+                message_id,
+                __private_sender,
+            } => {
+                database.insert_code(&code, message_id).await?;
+                __private_sender.send(()).ok();
+            }
+            DatabaseEvent::CodeFR {
+                code,
+                __private_sender,
+            } => {
+                database.set_code_fr(&code, true).await?;
+                let code = database.query_code(&code).await?;
+                __private_sender.send(code).ok();
+            }
+            DatabaseEvent::CodeQuery {
+                code,
+                __private_sender,
+            } => {
+                __private_sender
+                    .send(database.query_code(&code).await?)
+                    .ok();
+            }
+            DatabaseEvent::Terminate => unreachable!(),
+            DatabaseEvent::UserQuery {
+                user,
+                __private_sender,
+            } => {
+                __private_sender.send(database.query_user(user).await?).ok();
+            }
+            DatabaseEvent::CookieQueryAll(sender) => {
+                sender.send(database.cookie_query_all().await?).ok();
+            }
+            DatabaseEvent::VUpdate {
+                v,
+                __private_sender,
+            } => {
+                __private_sender.send(database.v_update(v).await?).ok();
+            }
+
+            DatabaseEvent::VQuery(sender) => {
+                sender.send(database.v_query().await?).ok();
+            }
+            DatabaseEvent::CookieToggle {
+                id,
+                usable,
+                __private_sender,
+            } => {
+                __private_sender
+                    .send(database.cookie_usable(&id, usable).await?)
+                    .ok();
+            }
+            DatabaseEvent::CookieSet {
+                user,
+                id,
+                csrf,
+                session,
+                __private_sender,
+            } => {
+                __private_sender
+                    .send(database.cookie_set(user, &csrf, &session, &id).await?)
+                    .ok();
+            }
+            DatabaseEvent::CookieUpdateTimestamp(id, sender) => {
+                sender
+                    .send(database.cookie_update_timestamp(&id).await?)
+                    .ok();
+            }
+            DatabaseEvent::LogInsert { id, code, error } => {
+                database.log_add(&id, &code, error).await?;
+            }
+            DatabaseEvent::LogQuery {
+                id,
+                __private_sender,
+            } => {
+                __private_sender.send(database.log_query(&id).await?).ok();
+            }
+        }
+        Ok(())
+    }
+
     async fn run(mut database: Database, mut receiver: DatabaseEventReceiver) -> DBResult<()> {
         while let Some(event) = receiver.recv().await {
-            match event {
-                DatabaseEvent::UserAdd {
-                    user,
-                    __private_sender,
-                } => {
-                    let u = database.query_user(user).await?;
-                    if u.is_none() {
-                        database.insert_user(user, false).await?;
-                        info!("Add user {} to database", user);
-                    }
-                    __private_sender.send(u.is_none()).ok();
-                }
-                DatabaseEvent::UserApprove {
-                    user,
-                    __private_sender,
-                } => {
-                    database.set_authorized_status(user, true).await?;
-                    __private_sender.send(()).ok();
-                }
-                DatabaseEvent::UserRevoke {
-                    user,
-                    __private_sender,
-                } => {
-                    database.set_authorized_status(user, false).await?;
-                    __private_sender.send(()).ok();
-                }
-
-                DatabaseEvent::CodeAdd {
-                    code,
-
-                    message_id,
-                    __private_sender,
-                } => {
-                    database.insert_code(&code, message_id).await?;
-                    __private_sender.send(()).ok();
-                }
-                DatabaseEvent::CodeFR {
-                    code,
-                    __private_sender,
-                } => {
-                    database.set_code_fr(&code, true).await?;
-                    let code = database.query_code(&code).await?;
-                    __private_sender.send(code).ok();
-                }
-                DatabaseEvent::CodeQuery {
-                    code,
-                    __private_sender,
-                } => {
-                    __private_sender
-                        .send(database.query_code(&code).await?)
-                        .ok();
-                }
-                DatabaseEvent::Terminate => break,
-                DatabaseEvent::UserQuery {
-                    user,
-                    __private_sender,
-                } => {
-                    __private_sender
-                        .send(
-                            database
-                                .query_user(user)
-                                .await?
-                                .map(|u| u.authorized())
-                                .unwrap_or(false),
-                        )
-                        .ok();
-                }
-                DatabaseEvent::CookieQueryAll(sender) => {
-                    sender.send(database.cookie_query_all().await?).ok();
-                }
-                DatabaseEvent::VUpdate {
-                    v,
-                    __private_sender,
-                } => {
-                    __private_sender.send(database.v_update(v).await?).ok();
-                }
-
-                DatabaseEvent::VQuery(sender) => {
-                    sender.send(database.v_query().await?).ok();
-                }
-                DatabaseEvent::CookieToggle {
-                    id,
-                    usable,
-                    __private_sender,
-                } => {
-                    __private_sender
-                        .send(database.cookie_usable(&id, usable).await?)
-                        .ok();
-                }
-                DatabaseEvent::CookieSet {
-                    user,
-                    id,
-                    csrf,
-                    session,
-                    __private_sender,
-                } => {
-                    __private_sender
-                        .send(database.cookie_set(user, &csrf, &session, &id).await?)
-                        .ok();
-                }
-                DatabaseEvent::CookieUpdateTimestamp(id, sender) => {
-                    sender
-                        .send(database.cookie_update_timestamp(&id).await?)
-                        .ok();
-                }
-                DatabaseEvent::LogInsert { id, code, error } => {
-                    database.log_add(&id, &code, error).await?;
-                }
-                DatabaseEvent::LogQuery {
-                    id,
-                    __private_sender,
-                } => {
-                    __private_sender.send(database.log_query(&id).await?).ok();
-                }
+            if let DatabaseEvent::Terminate = event {
+                break;
             }
+            Self::handle_event(&mut database, event)
+                .await
+                .tap_err(|e| error!("Sqlite error: {:?}", e))?;
         }
         database.close().await?;
         Ok(())
@@ -554,7 +557,7 @@ impl DatabaseHandle {
 }
 
 pub type DBResult<T> = sqlx::Result<T>;
-use tap::TapOptional;
+use tap::{Tap, TapFallible, TapOptional};
 use tokio::sync::broadcast;
 pub use v1 as current;
 

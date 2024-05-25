@@ -46,7 +46,9 @@ fn main() -> anyhow::Result<()> {
         .args(&[arg!([CONFIG] "Configure file").default_value("config.toml")])
         .get_matches();
 
-    env_logger::Builder::from_default_env().init();
+    env_logger::Builder::from_default_env()
+        .filter_module("hyper", log::LevelFilter::Warn)
+        .init();
 
     tokio::runtime::Builder::new_multi_thread()
         .enable_all()
