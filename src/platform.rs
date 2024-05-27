@@ -2,6 +2,7 @@ use std::sync::Arc;
 
 use anyhow::anyhow;
 use log::warn;
+use once_cell::sync::Lazy;
 use tap::TapFallible;
 use teloxide::{
     adaptors::DefaultParseMode,
@@ -18,6 +19,8 @@ use teloxide::{
 };
 
 use crate::{config::Config, database::DatabaseHelper};
+
+static PASSCODE_RE: Lazy<regex::Regex> = Lazy::new(|| regex::Regex::new(r"^[\w\d]{5,}$").unwrap());
 
 #[derive(BotCommands, Clone)]
 #[command(rename_rule = "lowercase")]
@@ -109,19 +112,22 @@ impl<'a> ReadableCallbackQuery<'a> {
 pub enum CookieOps<'a> {
     Toggle(&'a str, bool),
     Modify(&'a str, &'a str, &'a str),
+    Query(Option<&'a str>),
 }
 
 impl<'a> TryFrom<&'a str> for CookieOps<'a> {
     type Error = anyhow::Error;
 
     fn try_from(value: &'a str) -> Result<Self, Self::Error> {
-        if !value.contains(' ') {
+        log::debug!("{value:?}");
+        if !value.contains(' ') && !value.eq("query") {
             return Err(anyhow!("Missing space"));
         }
         let group = value.split(' ').collect::<Vec<_>>();
         if !match group[0] {
             "enable" | "disable" => group.len() > 1,
             "modify" | "add" => group.len() > 3,
+            "query" => true,
             _ => false,
         } {
             return Err(anyhow!("Mismatch argument count / Unknown ops"));
@@ -129,6 +135,7 @@ impl<'a> TryFrom<&'a str> for CookieOps<'a> {
         let arg = match group[0] {
             "enable" | "disable" => Self::Toggle(group[1], group[0].eq("enable")),
             "modify" | "add" => Self::Modify(group[1], group[2], group[3]),
+            "query" => Self::Query(group.get(1).copied()),
             _ => unreachable!(),
         };
         Ok(arg)
@@ -231,7 +238,8 @@ pub async fn handle_auth_command(
         bot.send_message(
             *admin,
             format!(
-                "User [{user}](tg://user?id={user}) request to grant talk power",
+                "User {}[{user}](tg://user?id={user}) request to grant talk power",
+                msg.chat.first_name().unwrap_or("<NO NAME>"),
                 user = msg.chat.id.0
             ),
         )
@@ -278,6 +286,30 @@ pub async fn handle_cookie_command(
             bot.send_message(msg.chat.id, format!("Updated {} cookie", id))
                 .await?;
         }
+        CookieOps::Query(additional) => {
+            let cookies =
+                if additional.is_some_and(|s| s.eq("all")) && arg.check_admin(msg.chat.id) {
+                    arg.database().cookie_query_all().await
+                } else {
+                    arg.database().cookie_query(msg.chat.id.0).await
+                }
+                .unwrap();
+            let cookies = cookies
+                .into_iter()
+                .map(|cookie| cookie.to_string())
+                .collect::<Vec<_>>()
+                .join("\n");
+            bot.send_message(
+                msg.chat.id,
+                if cookies.is_empty() {
+                    "Nothing to display".to_string()
+                } else {
+                    cookies
+                },
+            )
+            .await?;
+            return Ok(());
+        }
     }
     Ok(())
 }
@@ -318,21 +350,31 @@ pub async fn handle_message(
     if !arg.check_auth(msg.chat.id).await {
         return Ok(());
     }
-    let code = msg.text().unwrap();
-    if let Some(Some(c)) = arg.database().code_query(code.to_string()).await {
-        if c.is_fr() {
-            bot.send_message(msg.chat.id, format!("`{}` already FR", code))
-                .await?;
-        } else {
-            bot.send_message(msg.chat.id, format!("`{}` has been sent", code))
-                .reply_markup(make_fr_keyboard(code))
-                .await?;
+    for code in msg.text().unwrap().lines() {
+        if !PASSCODE_RE.is_match(code) {
+            warn!(
+                "Ignore wrong format passcode {} sent by {}({})",
+                code,
+                msg.chat.first_name().unwrap_or("<NO NAME>"),
+                msg.chat.id.0
+            );
+            continue;
         }
-    } else {
-        let msg = bot
-            .send_message(arg.target(), format!("`{}`", code))
-            .await?;
-        arg.database.code_add(code.to_string(), msg.id.0).await;
+        if let Some(Some(c)) = arg.database().code_query(code.to_string()).await {
+            if c.is_fr() {
+                bot.send_message(msg.chat.id, format!("`{}` already FR", code))
+                    .await?;
+            } else {
+                bot.send_message(msg.chat.id, format!("`{}` has been sent", code))
+                    .reply_markup(make_fr_keyboard(code))
+                    .await?;
+            }
+        } else {
+            let msg = bot
+                .send_message(arg.target(), format!("`{}`", code))
+                .await?;
+            arg.database.code_add(code.to_string(), msg.id.0).await;
+        }
     }
 
     Ok(())

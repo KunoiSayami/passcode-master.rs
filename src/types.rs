@@ -38,7 +38,6 @@ impl CodeRow {
     }
 }
 
-#[allow(dead_code)]
 #[derive(Clone, Debug, FromRow)]
 pub struct Cookie {
     id: String,
@@ -72,6 +71,23 @@ impl Cookie {
 
     pub fn belong_chat(&self) -> ChatId {
         ChatId(self.belong)
+    }
+
+    pub fn enabled(&self) -> bool {
+        self.enabled
+    }
+}
+
+impl std::fmt::Display for Cookie {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "{} {} {} {}",
+            self.id,
+            self.belong,
+            self.login_recently(3600),
+            self.enabled()
+        )
     }
 }
 

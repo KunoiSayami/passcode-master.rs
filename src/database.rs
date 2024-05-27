@@ -74,7 +74,7 @@ pub trait DatabaseCheckExt {
 
     async fn check_database_table(&mut self) -> sqlx::Result<bool> {
         Ok(
-            sqlx::query(r#"SELECT 1 FROM sqlite_master WHERE type='table' AND "name" = 'data'"#)
+            sqlx::query(r#"SELECT 1 FROM sqlite_master WHERE type='table' AND "name" = 'meta'"#)
                 .fetch_optional(self.conn_())
                 .await?
                 .is_some(),
@@ -269,6 +269,13 @@ impl Database {
             .await
     }
 
+    pub async fn cookie_query_user(&mut self, id: i64) -> DBResult<Vec<Cookie>> {
+        sqlx::query_as(r#"SELECT * FROM "cookies" WHERE "belong" = ?"#)
+            .bind(id)
+            .fetch_all(&mut self.conn)
+            .await
+    }
+
     pub async fn cookie_query_all(&mut self) -> DBResult<Vec<Cookie>> {
         sqlx::query_as(r#"SELECT* FROM "cookies"  WHERE "enabled" = 1"#)
             .fetch_all(&mut self.conn)
@@ -372,6 +379,9 @@ pub enum DatabaseEvent {
 
     #[ret(Vec<Cookie>)]
     CookieQueryAll,
+
+    #[ret(Vec<Cookie>)]
+    CookieQuery(i64),
 
     #[ret(())]
     CookieToggle {id: String, usable: bool},
@@ -533,6 +543,9 @@ impl DatabaseHandle {
                 __private_sender,
             } => {
                 __private_sender.send(database.log_query(&id).await?).ok();
+            }
+            DatabaseEvent::CookieQuery(id, sender) => {
+                sender.send(database.cookie_query_user(id).await?).ok();
             }
         }
         Ok(())

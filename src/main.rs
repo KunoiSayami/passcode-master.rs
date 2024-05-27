@@ -48,6 +48,8 @@ fn main() -> anyhow::Result<()> {
 
     env_logger::Builder::from_default_env()
         .filter_module("hyper", log::LevelFilter::Warn)
+        .filter_module("cookie_store", log::LevelFilter::Warn)
+        .filter_module("rustls", log::LevelFilter::Warn)
         .init();
 
     tokio::runtime::Builder::new_multi_thread()
