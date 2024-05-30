@@ -329,6 +329,12 @@ impl Database {
         .await
     }
 
+    pub async fn log_query_all(&mut self) -> DBResult<Vec<HistoryRow>> {
+        sqlx::query_as(r#"SELECT * FROM "history" ORDER BY "timestamp" DESC LIMIT 40"#)
+            .fetch_all(&mut self.conn)
+            .await
+    }
+
     pub async fn close(self) -> DBResult<()> {
         self.broadcast.send(current::BroadcastEvent::exit()).ok();
         self.conn.close().await
@@ -402,7 +408,7 @@ pub enum DatabaseEvent {
     },
 
     #[ret(Vec<HistoryRow>)]
-    LogQuery {id: String},
+    LogQuery {id: String,},
 
     #[ret(Option<VStats>)]
     VQuery,
@@ -542,7 +548,13 @@ impl DatabaseHandle {
                 id,
                 __private_sender,
             } => {
-                __private_sender.send(database.log_query(&id).await?).ok();
+                __private_sender
+                    .send(if id.is_empty() {
+                        database.log_query_all().await
+                    } else {
+                        database.log_query(&id).await
+                    }?)
+                    .ok();
             }
             DatabaseEvent::CookieQuery(id, sender) => {
                 sender.send(database.cookie_query_user(id).await?).ok();

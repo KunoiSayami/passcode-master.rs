@@ -22,6 +22,9 @@ use crate::{config::Config, database::DatabaseHelper};
 
 static PASSCODE_RE: Lazy<regex::Regex> = Lazy::new(|| regex::Regex::new(r"^[\w\d]{5,}$").unwrap());
 
+pub static TELEGRAM_ESCAPE_RE: Lazy<regex::Regex> =
+    Lazy::new(|| regex::Regex::new(r"([_*\[\]\(\)~`>#\+-=|\{}\.!])").unwrap());
+
 #[derive(BotCommands, Clone)]
 #[command(rename_rule = "lowercase")]
 enum Command {
@@ -320,17 +323,22 @@ pub async fn handle_log_command(
     arg: Arc<NecessaryArg>,
     id: String,
 ) -> anyhow::Result<()> {
-    if id.contains(' ') || !arg.check_auth(msg.chat.id).await {
+    if !arg.check_admin(msg.chat.id) {
         return Ok(());
     }
+
     match arg.database().log_query(id).await {
         Some(v) => {
             bot.send_message(
                 msg.chat.id,
-                v.iter()
-                    .map(|entry| entry.to_string())
-                    .collect::<Vec<_>>()
-                    .join("\n"),
+                TELEGRAM_ESCAPE_RE.replace_all(
+                    v.iter()
+                        .map(|entry| entry.to_string())
+                        .collect::<Vec<_>>()
+                        .join("\n")
+                        .as_str(),
+                    "\\$1",
+                ),
             )
             .await?;
         }

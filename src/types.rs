@@ -140,7 +140,7 @@ impl HistoryRow {
     pub fn time(&self) -> String {
         let time = DateTime::from_timestamp(self.timestamp(), 0).unwrap();
         time.with_timezone(&chrono_tz::Asia::Taipei)
-            .format("%Y-%m-%d %H:%M")
+            .format("%Y-%m-%d %H:%M:%S")
             .to_string()
     }
 

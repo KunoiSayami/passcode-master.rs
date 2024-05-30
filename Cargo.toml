@@ -1,23 +1,23 @@
 [package]
 name = "code-forwarder"
-version = "0.1.5"
+version = "0.1.6"
 edition = "2021"
 
 [dependencies]
 anyhow = "1"
-argon2 = "0.5.3"
+argon2 = "0.5"
 async-trait = "0.1"
 atoi = "2.0.0"
-axum = { version = "0.7.5", features = ["ws", "http2"] }
-axum-extra = { version = "0.9.3", features = ["typed-header"] }
+axum = { version = "0.7", features = ["ws", "http2"] }
+axum-extra = { version = "0.9", features = ["typed-header"] }
 chrono = "^0.4"
 chrono-tz = "0.9"
 clap = { version = "4", features = ["cargo"] }
 env_logger = "0.11"
-futures-util = "0.3.30"
+futures-util = "0.3"
 kstool-helper-generator = "0.4"
-kstool = "0.2.1"
-log = { version = "0.4.21", features = [
+kstool = "0.2"
+log = { version = "0.4", features = [
     "release_max_level_trace",
     "max_level_trace",
 ] }
@@ -33,7 +33,7 @@ teloxide = { version = "0.12", default-features = false, features = [
 ] }
 tokio = { version = "1", features = ["full"] }
 toml = "0.8"
-rand = "0.8.5"
+rand = "0.8"
 reqwest = { version = "0.12", default-features = false, features = [
     "rustls-tls-native-roots",
     "cookies",
