@@ -10,6 +10,7 @@ mod platform;
 mod private;
 mod types;
 pub mod web;
+use std::io::Write;
 
 async fn async_main(config: String) -> anyhow::Result<()> {
     let config = Config::load(&config)
@@ -41,16 +42,28 @@ async fn async_main(config: String) -> anyhow::Result<()> {
     Ok(())
 }
 
-fn main() -> anyhow::Result<()> {
-    let matches = clap::command!()
-        .args(&[arg!([CONFIG] "Configure file").default_value("config.toml")])
-        .get_matches();
-
-    env_logger::Builder::from_default_env()
+fn init_log(systemd: bool) {
+    let mut builder = env_logger::Builder::from_default_env();
+    builder
         .filter_module("hyper", log::LevelFilter::Warn)
         .filter_module("cookie_store", log::LevelFilter::Warn)
-        .filter_module("rustls", log::LevelFilter::Warn)
-        .init();
+        .filter_module("rustls", log::LevelFilter::Warn);
+
+    if systemd {
+        builder.format(|buf, record| writeln!(buf, "[{}] {}", record.level(), record.args()));
+    }
+    builder.init();
+}
+
+fn main() -> anyhow::Result<()> {
+    let matches = clap::command!()
+        .args(&[
+            arg!([CONFIG] "Configure file").default_value("config.toml"),
+            arg!(--systemd "Disable time output in log"),
+        ])
+        .get_matches();
+
+    init_log(matches.get_flag("systemd"));
 
     tokio::runtime::Builder::new_multi_thread()
         .enable_all()
