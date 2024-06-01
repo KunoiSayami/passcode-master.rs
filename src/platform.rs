@@ -122,7 +122,6 @@ impl<'a> TryFrom<&'a str> for CookieOps<'a> {
     type Error = anyhow::Error;
 
     fn try_from(value: &'a str) -> Result<Self, Self::Error> {
-        log::debug!("{value:?}");
         if !value.contains(' ') && !value.eq("query") {
             return Err(anyhow!("Missing space"));
         }
@@ -280,7 +279,7 @@ pub async fn handle_cookie_command(
             arg.database()
                 .cookie_set(
                     msg.chat.id.0,
-                    id.to_string(),
+                    id.to_lowercase(),
                     csrf.to_string(),
                     session.to_string(),
                 )
@@ -355,7 +354,7 @@ pub async fn handle_message(
     msg: Message,
     arg: Arc<NecessaryArg>,
 ) -> anyhow::Result<()> {
-    if !arg.check_auth(msg.chat.id).await {
+    if !arg.check_admin(msg.chat.id) {
         return Ok(());
     }
     for code in msg.text().unwrap().lines() {

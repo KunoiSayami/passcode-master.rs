@@ -50,7 +50,7 @@ fn init_log(systemd: bool) {
         .filter_module("rustls", log::LevelFilter::Warn);
 
     if systemd {
-        builder.filter_module("sqlx", log::LevelFilter::Warn);
+        //builder.filter_module("sqlx", log::LevelFilter::Warn);
         builder.format(|buf, record| writeln!(buf, "[{}] {}", record.level(), record.args()));
     }
     builder.init();
