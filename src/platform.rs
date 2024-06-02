@@ -25,12 +25,16 @@ static PASSCODE_RE: Lazy<regex::Regex> = Lazy::new(|| regex::Regex::new(r"^[\w\d
 pub static TELEGRAM_ESCAPE_RE: Lazy<regex::Regex> =
     Lazy::new(|| regex::Regex::new(r"([_*\[\]\(\)~`>#\+-=|\{}\.!])").unwrap());
 
+static VAILD_CODENAME: Lazy<regex::Regex> =
+    Lazy::new(|| regex::Regex::new(r"^(Agent_\d{5,}|[\w\d]{3,})$").unwrap());
+
 #[derive(BotCommands, Clone)]
 #[command(rename_rule = "lowercase")]
 enum Command {
     Auth,
     Cookie { ops: String },
     Log { id: String },
+    Ping,
 }
 
 #[derive(Clone, Debug)]
@@ -175,6 +179,7 @@ pub async fn bot_run(bot: BotType, config: Config, database: DatabaseHelper) -> 
                                 handle_cookie_command(bot, arg, msg, ops).await
                             }
                             Command::Log { id } => handle_log_command(bot, msg, arg, id).await,
+                            Command::Ping => handle_ping(bot, msg, arg).await,
                         }
                         .tap_err(|e| log::error!("Handle command error: {:?}", e))
                     },
@@ -240,7 +245,7 @@ pub async fn handle_auth_command(
         bot.send_message(
             *admin,
             format!(
-                "User {}[{user}](tg://user?id={user}) request to grant talk power",
+                "User {}([{user}](tg://user?id={user})) request to grant talk power",
                 msg.chat.first_name().unwrap_or("<NO NAME>"),
                 user = msg.chat.id.0
             ),
@@ -276,6 +281,11 @@ pub async fn handle_cookie_command(
                 .await?;
         }
         CookieOps::Modify(id, csrf, session) => {
+            if !VAILD_CODENAME.is_match(id) {
+                bot.send_message(msg.chat.id, "Invaild codename").await?;
+                return Ok(());
+            }
+
             arg.database()
                 .cookie_set(
                     msg.chat.id.0,
@@ -328,24 +338,38 @@ pub async fn handle_log_command(
 
     match arg.database().log_query(id).await {
         Some(v) => {
-            bot.send_message(
-                msg.chat.id,
-                TELEGRAM_ESCAPE_RE.replace_all(
-                    v.iter()
-                        .map(|entry| entry.to_string())
-                        .collect::<Vec<_>>()
-                        .join("\n")
-                        .as_str(),
-                    "\\$1",
-                ),
-            )
-            .await?;
+            let text = v
+                .iter()
+                .map(|entry| entry.to_string())
+                .collect::<Vec<_>>()
+                .join("\n");
+            if text.is_empty() {
+                bot.send_message(msg.chat.id, "__Nothing to display__")
+                    .await?;
+                return Ok(());
+            }
+
+            bot.send_message(msg.chat.id, TELEGRAM_ESCAPE_RE.replace_all(&text, "\\$1"))
+                .await?;
         }
         None => {
-            bot.send_message(msg.chat.id, "_Nothing to display_")
+            bot.send_message(msg.chat.id, "__Nothing to display__")
                 .await?;
         }
     }
+    Ok(())
+}
+
+pub async fn handle_ping(bot: BotType, msg: Message, arg: Arc<NecessaryArg>) -> anyhow::Result<()> {
+    bot.send_message(
+        msg.chat.id,
+        format!(
+            "Chat id: `{id}`\nOverall authorized: {is_authorized}",
+            id = msg.chat.id.0,
+            is_authorized = arg.check_auth(msg.chat.id).await
+        ),
+    )
+    .await?;
     Ok(())
 }
 
