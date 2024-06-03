@@ -123,6 +123,33 @@ pub enum CookieOps<'a> {
     Query(Option<&'a str>),
 }
 
+impl<'a> CookieOps<'a> {
+    fn try_parse(input: &'a str) -> Option<(&'a str, &'a str)> {
+        let mut csrf = "";
+        let mut session = "";
+
+        for line in input.split_whitespace() {
+            let line = line.trim();
+            if line.ends_with(";") && line.contains('=') {
+                let (left, right) = line.split_once("=").unwrap();
+                if left.eq("csrftoken") {
+                    csrf = &right[..right.len() - 1];
+                } else if left.eq("sessionid") {
+                    session = &right[..right.len() - 1];
+                }
+                if !csrf.is_empty() && !session.is_empty() {
+                    break;
+                }
+            }
+        }
+        if csrf.is_empty() || session.is_empty() {
+            None
+        } else {
+            Some((csrf, session))
+        }
+    }
+}
+
 impl<'a> TryFrom<&'a str> for CookieOps<'a> {
     type Error = anyhow::Error;
 
@@ -141,7 +168,17 @@ impl<'a> TryFrom<&'a str> for CookieOps<'a> {
         }
         let arg = match group[0] {
             "enable" | "disable" => Self::Toggle(group[1], group[0].eq("enable")),
-            "modify" | "add" => Self::Modify(group[1], group[2], group[3]),
+            "modify" | "add" => {
+                if value.contains("=") {
+                    if let Some((csrf, session)) = Self::try_parse(value) {
+                        Self::Modify(group[1], csrf, session)
+                    } else {
+                        return Err(anyhow!("Unexpected ="));
+                    }
+                } else {
+                    Self::Modify(group[1], group[2], group[3])
+                }
+            }
             "query" => Self::Query(group.get(1).copied()),
             _ => unreachable!(),
         };
