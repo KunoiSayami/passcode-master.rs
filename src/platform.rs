@@ -34,6 +34,7 @@ enum Command {
     Auth,
     Cookie { ops: String },
     Log { id: String },
+    Resent { code: String },
     Ping,
 }
 
@@ -129,7 +130,7 @@ impl<'a> TryFrom<&'a str> for CookieOps<'a> {
         if !value.contains(' ') && !value.eq("query") {
             return Err(anyhow!("Missing space"));
         }
-        let group = value.split(' ').collect::<Vec<_>>();
+        let group = value.trim().split_whitespace().collect::<Vec<_>>();
         if !match group[0] {
             "enable" | "disable" => group.len() > 1,
             "modify" | "add" => group.len() > 3,
@@ -180,6 +181,7 @@ pub async fn bot_run(bot: BotType, config: Config, database: DatabaseHelper) -> 
                             }
                             Command::Log { id } => handle_log_command(bot, msg, arg, id).await,
                             Command::Ping => handle_ping(bot, msg, arg).await,
+                            Command::Resent { code } => handle_resent(bot, msg, arg, code).await,
                         }
                         .tap_err(|e| log::error!("Handle command error: {:?}", e))
                     },
@@ -281,6 +283,7 @@ pub async fn handle_cookie_command(
                 .await?;
         }
         CookieOps::Modify(id, csrf, session) => {
+            log::debug!("{id:?}");
             if !VAILD_CODENAME.is_match(id) {
                 bot.send_message(msg.chat.id, "Invaild codename").await?;
                 return Ok(());
@@ -357,6 +360,21 @@ pub async fn handle_log_command(
                 .await?;
         }
     }
+    Ok(())
+}
+
+pub async fn handle_resent(
+    bot: BotType,
+    msg: Message,
+    arg: Arc<NecessaryArg>,
+    code: String,
+) -> anyhow::Result<()> {
+    if !arg.check_admin(msg.chat.id) {
+        return Ok(());
+    }
+    arg.database().code_resent(code.clone()).await;
+    bot.send_message(msg.chat.id, format!("`{code}` resent",))
+        .await?;
     Ok(())
 }
 

@@ -223,7 +223,7 @@ impl Database {
                     return Ok(false);
                 }
                 sqlx::query(
-                    r#"UPDATE "cookies" SET "csrf_token"= ?, "session" = ? WHERE "id" = ?"#,
+                    r#"UPDATE "cookies" SET "csrf_token"= ?, "session_id" = ? WHERE "id" = ?"#,
                 )
                 .bind(csrf)
                 .bind(session)
@@ -377,6 +377,10 @@ pub enum DatabaseEvent {
     CodeAdd {
         code: String,
         message_id: i32,
+    },
+    #[ret(())]
+    CodeResent {
+        code: String,
     },
     #[ret(Option<CodeRow>)]
     CodeFR {
@@ -558,6 +562,13 @@ impl DatabaseHandle {
             }
             DatabaseEvent::CookieQuery(id, sender) => {
                 sender.send(database.cookie_query_user(id).await?).ok();
+            }
+            DatabaseEvent::CodeResent {
+                code,
+                __private_sender,
+            } => {
+                database.broadcast.send(BroadcastEvent::NewCode(code)).ok();
+                __private_sender.send(()).ok();
             }
         }
         Ok(())
