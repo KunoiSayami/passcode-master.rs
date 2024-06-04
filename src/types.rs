@@ -14,8 +14,8 @@ pub struct User {
 }
 
 impl User {
-    pub fn authorized(&self) -> bool {
-        self.authorized == 1
+    pub fn authorized(&self) -> i32 {
+        self.authorized as i32
     }
 }
 
@@ -223,3 +223,37 @@ impl VStats {
         serde_json::to_value(self).unwrap()
     }
 }
+
+mod access_level {
+
+    use enum_primitive_derive::Primitive;
+
+    #[derive(Copy, Clone, Debug, strum::IntoStaticStr, Primitive)]
+    pub enum AccessLevel {
+        NoAccess = 0,
+        Cookie = 1,
+        Send = 2,
+        All = 31,
+    }
+    impl Default for AccessLevel {
+        fn default() -> Self {
+            Self::NoAccess
+        }
+    }
+
+    impl AccessLevel {
+        pub fn required(&self, input: i32) -> bool {
+            *self as i32 | input > 0
+        }
+
+        pub fn f_i32(input: i32) -> Self {
+            num_traits::FromPrimitive::from_i32(input).unwrap_or_default()
+        }
+
+        pub fn i32(&self) -> i32 {
+            *self as i32
+        }
+    }
+}
+
+pub use access_level::AccessLevel;

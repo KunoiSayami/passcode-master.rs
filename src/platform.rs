@@ -18,7 +18,7 @@ use teloxide::{
     Bot,
 };
 
-use crate::{config::Config, database::DatabaseHelper};
+use crate::{config::Config, database::DatabaseHelper, types::AccessLevel};
 
 static PASSCODE_RE: Lazy<regex::Regex> = Lazy::new(|| regex::Regex::new(r"^[\w\d]{5,}$").unwrap());
 
@@ -66,15 +66,23 @@ impl NecessaryArg {
         ChatId(self.target)
     }
 
-    pub async fn check_auth(&self, id: ChatId) -> bool {
+    pub async fn check_auth(&self, id: ChatId, level: AccessLevel) -> bool {
         self.check_admin(id)
-            || self
-                .database()
-                .user_query(id.0)
-                .await
-                .flatten()
-                .map(|u| u.authorized())
-                .unwrap_or(false)
+            || level.required(
+                self.database()
+                    .user_query(id.0)
+                    .await
+                    .flatten()
+                    .map(|u| u.authorized())
+                    .unwrap_or(0),
+            )
+    }
+    pub async fn access_level(&self, id: ChatId) -> Option<AccessLevel> {
+        self.database
+            .user_query(id.0)
+            .await
+            .flatten()
+            .map(|u| AccessLevel::f_i32(u.authorized()))
     }
 
     pub fn check_admin(&self, id: ChatId) -> bool {
@@ -305,7 +313,7 @@ pub async fn handle_cookie_command(
     msg: Message,
     ops: String,
 ) -> anyhow::Result<()> {
-    if !arg.check_auth(msg.chat.id).await {
+    if !arg.check_auth(msg.chat.id, AccessLevel::Cookie).await {
         return Ok(());
     }
     let ops = match CookieOps::try_from(ops.as_str()) {
@@ -345,7 +353,7 @@ pub async fn handle_cookie_command(
             let cookies =
                 if additional.is_some_and(|s| s.eq("all")) && arg.check_admin(msg.chat.id) {
                     arg.database().cookie_query_all(false).await
-                } else if arg.check_auth(msg.chat.id).await {
+                } else if arg.check_auth(msg.chat.id, AccessLevel::Cookie).await {
                     arg.database().cookie_query(msg.chat.id.0).await
                 } else {
                     return Ok(());
@@ -426,9 +434,14 @@ pub async fn handle_ping(bot: BotType, msg: Message, arg: Arc<NecessaryArg>) -> 
     bot.send_message(
         msg.chat.id,
         format!(
-            "Chat id: `{id}`\nOverall authorized: {is_authorized}\nVersion: {version}",
+            "Chat id: `{id}`\nAccess level: {is_authorized}\nIs admin: {is_admin}\nVersion: {version}",
             id = msg.chat.id.0,
-            is_authorized = arg.check_auth(msg.chat.id).await,
+            is_authorized = arg
+                .access_level(msg.chat.id)
+                .await
+                .map(|l| l.into())
+                .unwrap_or("Not found"),
+            is_admin = arg.check_admin(msg.chat.id),
             version = TELEGRAM_ESCAPE_RE.replace_all(env!("CARGO_PKG_VERSION"), "\\$1")
         ),
     )
@@ -488,9 +501,22 @@ pub async fn handle_callback_query(
     if let Some(cq) = cq {
         match cq.head {
             "user" => match cq.action {
-                "auth" => {
+                "all" | "cookie" | "message" => {
                     if let Some(id) = cq.target_i64() {
-                        arg.database().user_approve(id).await;
+                        arg.database()
+                            .user_approve(
+                                id,
+                                match cq.action {
+                                    "all" => AccessLevel::All,
+                                    "cookie" => AccessLevel::Cookie,
+                                    "message" => AccessLevel::Send,
+                                    _ => {
+                                        log::warn!("Match default branch");
+                                        AccessLevel::Cookie
+                                    }
+                                },
+                            )
+                            .await;
                         bot.send_message(ChatId(id), "Talk power granted").await?;
                         log::debug!("Grant {} power", id);
                     }
@@ -538,7 +564,12 @@ pub fn make_fr_keyboard(code: &str) -> InlineKeyboardMarkup {
 
 pub fn mark_auth_keyboard(user: i64) -> InlineKeyboardMarkup {
     InlineKeyboardMarkup::new([[
-        InlineKeyboardButton::callback("Yes", format!("user auth {}", user)),
-        InlineKeyboardButton::callback("No", format!("user reject {}", user)),
+        InlineKeyboardButton::callback("Cookie", format!("user cookie {}", user)),
+        InlineKeyboardButton::callback("Message", format!("user message {}", user)),
+        InlineKeyboardButton::callback("All", format!("user all {}", user)),
     ]])
+    .append_row([InlineKeyboardButton::callback(
+        "No",
+        format!("user reject {}", user),
+    )])
 }

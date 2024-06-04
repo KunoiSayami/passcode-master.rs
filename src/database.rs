@@ -184,29 +184,29 @@ impl Database {
             .await
     }
 
-    pub async fn insert_user(&mut self, user: i64, authorized: bool) -> DBResult<()> {
+    pub async fn insert_user(&mut self, user: i64, level: AccessLevel) -> DBResult<()> {
         sqlx::query(r#"INSERT INTO "users" VALUES (?, ?)"#)
             .bind(user)
-            .bind(authorized)
+            .bind(level.i32())
             .execute(&mut self.conn)
             .await?;
         Ok(())
     }
 
-    pub async fn set_authorized_status(&mut self, user: i64, authorized: bool) -> DBResult<()> {
+    pub async fn set_authorized_status(&mut self, user: i64, level: AccessLevel) -> DBResult<()> {
         match self.query_user(user).await.tap(|u| log::debug!("{u:?}"))? {
             Some(cur) => {
-                if cur.authorized() == authorized {
+                if cur.authorized() == level.i32() {
                     return Ok(());
                 }
                 sqlx::query(r#"UPDATE "users" SET "authorized" = ? WHERE "id" = ?"#)
-                    .bind(authorized)
+                    .bind(level.i32())
                     .bind(user)
                     .execute(&mut self.conn)
                     .await?;
                 Ok(())
             }
-            None => self.insert_user(user, authorized).await,
+            None => self.insert_user(user, level).await,
         }
     }
 
@@ -366,6 +366,7 @@ pub enum DatabaseEvent {
     #[ret(())]
     UserApprove {
         user: i64,
+        level: AccessLevel,
     },
     #[ret(())]
     UserRevoke {
@@ -460,16 +461,17 @@ impl DatabaseHandle {
             } => {
                 let u = database.query_user(user).await?;
                 if u.is_none() {
-                    database.insert_user(user, false).await?;
+                    database.insert_user(user, AccessLevel::NoAccess).await?;
                     info!("Add user {} to database", user);
                 }
                 __private_sender.send(u.is_none()).ok();
             }
             DatabaseEvent::UserApprove {
                 user,
+                level,
                 __private_sender,
             } => {
-                database.set_authorized_status(user, true).await?;
+                database.set_authorized_status(user, level).await?;
                 info!("Approve user {}", user);
                 __private_sender.send(()).ok();
             }
@@ -477,7 +479,9 @@ impl DatabaseHandle {
                 user,
                 __private_sender,
             } => {
-                database.set_authorized_status(user, false).await?;
+                database
+                    .set_authorized_status(user, AccessLevel::NoAccess)
+                    .await?;
                 __private_sender.send(()).ok();
             }
 
@@ -609,6 +613,6 @@ use tap::{Tap, TapFallible, TapOptional};
 use tokio::sync::broadcast;
 pub use v1 as current;
 
-use crate::types::{CodeRow, Cookie, HistoryRow, MetaRow, User, VStats};
+use crate::types::{AccessLevel, CodeRow, Cookie, HistoryRow, MetaRow, User, VStats};
 
 pub use current::BroadcastEvent;
