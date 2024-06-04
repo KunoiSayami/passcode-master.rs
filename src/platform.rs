@@ -31,10 +31,11 @@ static VALID_CODENAME: Lazy<regex::Regex> =
 #[derive(BotCommands, Clone)]
 #[command(rename_rule = "lowercase")]
 enum Command {
-    Auth,
+    Auth { code: String },
     Cookie { ops: String },
     Log { id: String },
     Resent { code: String },
+    Invite,
     Ping,
 }
 
@@ -42,15 +43,22 @@ enum Command {
 pub struct NecessaryArg {
     database: DatabaseHelper,
     admin: Vec<ChatId>,
+    totp: totp_rs::TOTP,
     target: i64,
 }
 
 impl NecessaryArg {
-    pub fn new(database: DatabaseHelper, admin: Vec<ChatId>, target: i64) -> Self {
+    pub fn new(
+        database: DatabaseHelper,
+        admin: Vec<ChatId>,
+        target: i64,
+        totp: totp_rs::TOTP,
+    ) -> Self {
         Self {
             database,
             admin,
             target,
+            totp,
         }
     }
 
@@ -208,11 +216,17 @@ pub fn bot(config: &Config) -> anyhow::Result<BotType> {
 
 pub type BotType = DefaultParseMode<Bot>;
 
-pub async fn bot_run(bot: BotType, config: Config, database: DatabaseHelper) -> anyhow::Result<()> {
+pub async fn bot_run(
+    bot: BotType,
+    config: Config,
+    database: DatabaseHelper,
+    totp: totp_rs::TOTP,
+) -> anyhow::Result<()> {
     let arg = Arc::new(NecessaryArg::new(
         database,
         config.admin().iter().map(|u| ChatId(*u)).collect(),
         config.platform().target(),
+        totp,
     ));
 
     let handle_message = Update::filter_message()
@@ -223,13 +237,16 @@ pub async fn bot_run(bot: BotType, config: Config, database: DatabaseHelper) -> 
                 .endpoint(
                     |msg: Message, bot: BotType, arg: Arc<NecessaryArg>, cmd: Command| async move {
                         match cmd {
-                            Command::Auth => handle_auth_command(bot, arg, msg).await,
+                            Command::Auth { code } => {
+                                handle_auth_command(bot, arg, msg, code).await
+                            }
                             Command::Cookie { ops } => {
                                 handle_cookie_command(bot, arg, msg, ops).await
                             }
                             Command::Log { id } => handle_log_command(bot, msg, arg, id).await,
                             Command::Ping => handle_ping(bot, msg, arg).await,
                             Command::Resent { code } => handle_resent(bot, msg, arg, code).await,
+                            Command::Invite => handle_get_invite(bot, msg, arg).await,
                         }
                         .tap_err(|e| log::error!("Handle command error: {:?}", e))
                     },
@@ -280,6 +297,7 @@ pub async fn handle_auth_command(
     bot: BotType,
     arg: Arc<NecessaryArg>,
     msg: Message,
+    code: String,
 ) -> anyhow::Result<()> {
     if arg.check_admin(msg.chat.id)
         || arg
@@ -291,12 +309,23 @@ pub async fn handle_auth_command(
     {
         return Ok(());
     }
+
+    if code.is_empty() && !arg.totp.check(&code, kstool::time::get_current_second()) {
+        log::debug!(
+            "Unexpected auth command from {}({})",
+            msg.chat.first_name().unwrap_or("<NO Name>"),
+            msg.chat.id.0
+        );
+        return Ok(());
+    }
+
     for admin in arg.admin() {
         bot.send_message(
             *admin,
             format!(
-                "User {}([{user}](tg://user?id={user})) request to grant talk power",
-                msg.chat.first_name().unwrap_or("<NO NAME>"),
+                "User {}\\([{user}](tg://user?id={user})\\) request to grant talk power",
+                TELEGRAM_ESCAPE_RE
+                    .replace_all(msg.chat.first_name().unwrap_or("<NO NAME\\>"), "\\$1"),
                 user = msg.chat.id.0
             ),
         )
@@ -331,7 +360,7 @@ pub async fn handle_cookie_command(
                 .await?;
         }
         CookieOps::Modify(id, csrf, session) => {
-            log::debug!("{id:?}");
+            //log::debug!("{id:?}");
             if !VALID_CODENAME.is_match(id) {
                 bot.send_message(msg.chat.id, "Invalid codename").await?;
                 return Ok(());
@@ -449,6 +478,27 @@ pub async fn handle_ping(bot: BotType, msg: Message, arg: Arc<NecessaryArg>) -> 
     Ok(())
 }
 
+pub async fn handle_get_invite(
+    bot: BotType,
+    msg: Message,
+    arg: Arc<NecessaryArg>,
+) -> anyhow::Result<()> {
+    if !arg.check_admin(msg.chat.id) {
+        return Ok(());
+    }
+
+    bot.send_message(
+        msg.chat.id,
+        format!(
+            "Use `/auth {}` to get authorized",
+            arg.totp.generate_current().unwrap()
+        ),
+    )
+    .await?;
+
+    Ok(())
+}
+
 pub async fn handle_message(
     bot: BotType,
     msg: Message,
@@ -518,7 +568,7 @@ pub async fn handle_callback_query(
                             )
                             .await;
                         bot.send_message(ChatId(id), "Talk power granted").await?;
-                        log::debug!("Grant {} power", id);
+                        log::info!("{} grant {} power", msg.from.id.0, id);
                     }
                 }
                 "reject" => {

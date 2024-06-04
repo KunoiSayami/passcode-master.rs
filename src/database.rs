@@ -194,7 +194,9 @@ impl Database {
     }
 
     pub async fn set_authorized_status(&mut self, user: i64, level: AccessLevel) -> DBResult<()> {
-        match self.query_user(user).await.tap(|u| log::debug!("{u:?}"))? {
+        match self.query_user(user).await
+        //.tap(|u| log::debug!("{u:?}"))
+        ? {
             Some(cur) => {
                 if cur.authorized() == level.i32() {
                     return Ok(());
@@ -609,7 +611,7 @@ impl DatabaseHandle {
 }
 
 pub type DBResult<T> = sqlx::Result<T>;
-use tap::{Tap, TapFallible, TapOptional};
+use tap::{TapFallible, TapOptional};
 use tokio::sync::broadcast;
 pub use v1 as current;
 

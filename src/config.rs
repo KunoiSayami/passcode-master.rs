@@ -4,6 +4,7 @@ use tokio::io::AsyncReadExt;
 #[derive(Clone, Debug, Deserialize)]
 pub struct Config {
     admin: Vec<i64>,
+    totp: String,
     database: String,
     #[serde(default)]
     web: Web,
@@ -33,6 +34,18 @@ impl Config {
 
     pub fn database(&self) -> &str {
         &self.database
+    }
+
+    pub fn get_totp(&self) -> anyhow::Result<totp_rs::TOTP> {
+        Ok(totp_rs::TOTP::new(
+            totp_rs::Algorithm::SHA256,
+            8,
+            6,
+            30,
+            totp_rs::Secret::Encoded(self.totp.clone())
+                .to_bytes()
+                .map_err(|e| anyhow::anyhow!("TOTP parse error: {:?}", e))?,
+        )?)
     }
 }
 

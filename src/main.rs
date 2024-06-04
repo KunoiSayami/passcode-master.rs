@@ -21,13 +21,15 @@ async fn async_main(config: String) -> anyhow::Result<()> {
         .await
         .tap_err(|e| error!("Load database error: {:?}", e))?;
 
+    let totp = config.get_totp()?;
+
     let web = tokio::spawn(web::route(config.clone(), broadcast.resubscribe()));
 
     let bot = platform::bot(&config)?;
 
     let code_master = private::CodeStaff::start(bot.clone(), operator.clone(), broadcast);
 
-    platform::bot_run(bot, config, operator.clone().into()).await?;
+    platform::bot_run(bot, config, operator.clone().into(), totp).await?;
 
     operator.terminate().await;
 
@@ -50,7 +52,7 @@ fn init_log(systemd: bool) {
         .filter_module("rustls", log::LevelFilter::Warn);
 
     if systemd {
-        //builder.filter_module("sqlx", log::LevelFilter::Warn);
+        builder.filter_module("sqlx", log::LevelFilter::Warn);
         builder.format(|buf, record| writeln!(buf, "[{}] {}", record.level(), record.args()));
     }
     builder.init();
