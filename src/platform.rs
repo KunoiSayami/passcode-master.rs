@@ -454,7 +454,7 @@ pub async fn handle_message(
     msg: Message,
     arg: Arc<NecessaryArg>,
 ) -> anyhow::Result<()> {
-    if !arg.check_admin(msg.chat.id) {
+    if !arg.check_auth(msg.chat.id, AccessLevel::Send).await {
         return Ok(());
     }
     for code in msg.text().unwrap().lines() {

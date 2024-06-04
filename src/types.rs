@@ -243,7 +243,7 @@ mod access_level {
 
     impl AccessLevel {
         pub fn required(&self, input: i32) -> bool {
-            *self as i32 | input > 0
+            *self as i32 & input > 0
         }
 
         pub fn f_i32(input: i32) -> Self {
@@ -252,6 +252,20 @@ mod access_level {
 
         pub fn i32(&self) -> i32 {
             *self as i32
+        }
+    }
+
+    #[cfg(test)]
+    mod test {
+        use super::*;
+
+        #[test]
+        fn test_access_level() {
+            assert!(AccessLevel::All.required(2));
+            assert!(AccessLevel::Send.required(2));
+
+            assert!(!AccessLevel::Send.required(1));
+            assert!(!AccessLevel::All.required(0));
         }
     }
 }
