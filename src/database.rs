@@ -276,8 +276,14 @@ impl Database {
             .await
     }
 
-    pub async fn cookie_query_all(&mut self) -> DBResult<Vec<Cookie>> {
+    pub async fn cookie_query_all_enabled(&mut self) -> DBResult<Vec<Cookie>> {
         sqlx::query_as(r#"SELECT* FROM "cookies"  WHERE "enabled" = 1"#)
+            .fetch_all(&mut self.conn)
+            .await
+    }
+
+    pub async fn cookie_query_all(&mut self) -> DBResult<Vec<Cookie>> {
+        sqlx::query_as(r#"SELECT* FROM "cookies""#)
             .fetch_all(&mut self.conn)
             .await
     }
@@ -388,7 +394,7 @@ pub enum DatabaseEvent {
     },
 
     #[ret(Vec<Cookie>)]
-    CookieQueryAll,
+    CookieQueryAll(bool),
 
     #[ret(Vec<Cookie>)]
     CookieQuery(i64),
@@ -507,8 +513,14 @@ impl DatabaseHandle {
             } => {
                 __private_sender.send(database.query_user(user).await?).ok();
             }
-            DatabaseEvent::CookieQueryAll(sender) => {
-                sender.send(database.cookie_query_all().await?).ok();
+            DatabaseEvent::CookieQueryAll(enabled_only, sender) => {
+                sender
+                    .send(if enabled_only {
+                        database.cookie_query_all_enabled().await
+                    } else {
+                        database.cookie_query_all().await
+                    }?)
+                    .ok();
             }
             DatabaseEvent::VUpdate {
                 v,

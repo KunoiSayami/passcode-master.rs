@@ -4,6 +4,8 @@ use serde::{Deserialize, Serialize};
 use sqlx::prelude::FromRow;
 use teloxide::types::ChatId;
 
+use crate::platform::TELEGRAM_ESCAPE_RE;
+
 #[allow(dead_code)]
 #[derive(Clone, Copy, Debug, FromRow)]
 pub struct User {
@@ -49,6 +51,8 @@ pub struct Cookie {
 }
 
 impl Cookie {
+    pub const RECENTLY: i64 = 7200;
+
     pub fn csrf_token(&self) -> &str {
         &self.csrf_token
     }
@@ -82,11 +86,19 @@ impl std::fmt::Display for Cookie {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(
             f,
-            "{} {} {} {}",
+            "{} [{}](tg://user?id={}) {} {}",
             self.id,
             self.belong,
-            self.login_recently(3600),
-            self.enabled()
+            self.belong,
+            if self.enabled() {
+                "enabled"
+            } else {
+                "disabled"
+            },
+            TELEGRAM_ESCAPE_RE.replace_all(
+                HistoryRow::timestamp_to_string(self.last_login).as_str(),
+                "\\$1"
+            )
         )
     }
 }
@@ -137,11 +149,15 @@ impl HistoryRow {
         self.timestamp
     }
 
-    pub fn time(&self) -> String {
-        let time = DateTime::from_timestamp(self.timestamp(), 0).unwrap();
+    pub fn timestamp_to_string(timestamp: i64) -> String {
+        let time = DateTime::from_timestamp(timestamp, 0).unwrap();
         time.with_timezone(&chrono_tz::Asia::Taipei)
             .format("%Y-%m-%d %H:%M:%S")
             .to_string()
+    }
+
+    pub fn time(&self) -> String {
+        Self::timestamp_to_string(self.timestamp())
     }
 
     pub fn id(&self) -> &str {

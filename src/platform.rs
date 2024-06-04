@@ -25,7 +25,7 @@ static PASSCODE_RE: Lazy<regex::Regex> = Lazy::new(|| regex::Regex::new(r"^[\w\d
 pub static TELEGRAM_ESCAPE_RE: Lazy<regex::Regex> =
     Lazy::new(|| regex::Regex::new(r"([_*\[\]\(\)~`>#\+-=|\{}\.!])").unwrap());
 
-static VAILD_CODENAME: Lazy<regex::Regex> =
+static VALID_CODENAME: Lazy<regex::Regex> =
     Lazy::new(|| regex::Regex::new(r"^(Agent_\d{5,}|[\w\d]{3,})$").unwrap());
 
 #[derive(BotCommands, Clone)]
@@ -130,23 +130,26 @@ impl<'a> CookieOps<'a> {
 
         for line in input.split_whitespace() {
             let line = line.trim();
-            if line.ends_with(";") && line.contains('=') {
+            if line.contains('=') {
                 let (left, right) = line.split_once("=").unwrap();
+
+                let end = if right.ends_with(";") {
+                    right.len() - 1
+                } else {
+                    right.len()
+                };
+
                 if left.eq("csrftoken") {
-                    csrf = &right[..right.len() - 1];
+                    csrf = &right[..end];
                 } else if left.eq("sessionid") {
-                    session = &right[..right.len() - 1];
+                    session = &right[..end];
                 }
                 if !csrf.is_empty() && !session.is_empty() {
-                    break;
+                    return Some((csrf, session));
                 }
             }
         }
-        if csrf.is_empty() || session.is_empty() {
-            None
-        } else {
-            Some((csrf, session))
-        }
+        None
     }
 }
 
@@ -321,8 +324,8 @@ pub async fn handle_cookie_command(
         }
         CookieOps::Modify(id, csrf, session) => {
             log::debug!("{id:?}");
-            if !VAILD_CODENAME.is_match(id) {
-                bot.send_message(msg.chat.id, "Invaild codename").await?;
+            if !VALID_CODENAME.is_match(id) {
+                bot.send_message(msg.chat.id, "Invalid codename").await?;
                 return Ok(());
             }
 
@@ -341,16 +344,20 @@ pub async fn handle_cookie_command(
         CookieOps::Query(additional) => {
             let cookies =
                 if additional.is_some_and(|s| s.eq("all")) && arg.check_admin(msg.chat.id) {
-                    arg.database().cookie_query_all().await
-                } else {
+                    arg.database().cookie_query_all(false).await
+                } else if arg.check_auth(msg.chat.id).await {
                     arg.database().cookie_query(msg.chat.id.0).await
+                } else {
+                    return Ok(());
                 }
                 .unwrap();
+
             let cookies = cookies
                 .into_iter()
                 .map(|cookie| cookie.to_string())
                 .collect::<Vec<_>>()
                 .join("\n");
+
             bot.send_message(
                 msg.chat.id,
                 if cookies.is_empty() {
@@ -419,9 +426,10 @@ pub async fn handle_ping(bot: BotType, msg: Message, arg: Arc<NecessaryArg>) -> 
     bot.send_message(
         msg.chat.id,
         format!(
-            "Chat id: `{id}`\nOverall authorized: {is_authorized}",
+            "Chat id: `{id}`\nOverall authorized: {is_authorized}\nVersion: {version}",
             id = msg.chat.id.0,
-            is_authorized = arg.check_auth(msg.chat.id).await
+            is_authorized = arg.check_auth(msg.chat.id).await,
+            version = TELEGRAM_ESCAPE_RE.replace_all(env!("CARGO_PKG_VERSION"), "\\$1")
         ),
     )
     .await?;
