@@ -402,6 +402,9 @@ pub enum DatabaseEvent {
     #[ret(Vec<Cookie>)]
     CookieQuery(i64),
 
+    #[ret(Option<Cookie>)]
+    CookieQueryID(String),
+
     #[ret(())]
     CookieToggle {id: String, usable: bool},
 
@@ -519,6 +522,13 @@ impl DatabaseHandle {
             } => {
                 __private_sender.send(database.query_user(user).await?).ok();
             }
+
+            DatabaseEvent::CookieQuery(id, sender) => {
+                sender.send(database.cookie_query_user(id).await?).ok();
+            }
+            DatabaseEvent::CookieQueryID(id, sender) => {
+                sender.send(database.cookie_query(&id).await?).ok();
+            }
             DatabaseEvent::CookieQueryAll(enabled_only, sender) => {
                 sender
                     .send(if enabled_only {
@@ -577,9 +587,6 @@ impl DatabaseHandle {
                         database.log_query(&id).await
                     }?)
                     .ok();
-            }
-            DatabaseEvent::CookieQuery(id, sender) => {
-                sender.send(database.cookie_query_user(id).await?).ok();
             }
             DatabaseEvent::CodeResent {
                 code,

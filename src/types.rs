@@ -270,4 +270,34 @@ mod access_level {
     }
 }
 
+/*
+mod cookie_querier {
+    use super::ChatId;
+
+    #[derive(Debug)]
+    pub enum CookieQuerier {
+        ID(i64),
+        CodeName(String),
+    }
+
+    impl From<&str> for CookieQuerier {
+        fn from(value: &str) -> Self {
+            Self::CodeName(value.to_string())
+        }
+    }
+
+    impl From<i64> for CookieQuerier {
+        fn from(value: i64) -> Self {
+            Self::ID(value)
+        }
+    }
+
+    impl From<ChatId> for CookieQuerier {
+        fn from(value: ChatId) -> Self {
+            Self::from(value.0)
+        }
+    }
+} */
+
 pub use access_level::AccessLevel;
+//pub use cookie_querier::CookieQuerier;

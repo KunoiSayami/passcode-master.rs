@@ -354,6 +354,16 @@ pub async fn handle_cookie_command(
     };
     match ops {
         CookieOps::Toggle(id, enabled) => {
+            if !(arg.check_admin(msg.chat.id)
+                || arg
+                    .database()
+                    .cookie_query_id(id.to_string())
+                    .await
+                    .flatten()
+                    .is_some_and(|c| c.belong_chat().eq(&msg.chat.id)))
+            {
+                return Ok(());
+            }
             arg.database().cookie_toggle(id.to_string(), enabled).await;
 
             bot.send_message(msg.chat.id, format!("Toggle {} to {}", id, enabled))
