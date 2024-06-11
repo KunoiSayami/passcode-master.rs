@@ -602,7 +602,7 @@ pub async fn handle_callback_query(
                 }
             }
             _ => {
-                warn!("Unreachable data: {:?}", cq)
+                warn!("Unreachable data: {cq:?}")
             }
         }
     }
@@ -618,7 +618,7 @@ pub async fn handle_callback_query(
 pub fn make_fr_keyboard(code: &str) -> InlineKeyboardMarkup {
     InlineKeyboardMarkup::new([[InlineKeyboardButton::callback(
         "Mark as FR",
-        format!("code fr {}", code),
+        format!("code fr {code}"),
     )]])
 }
 

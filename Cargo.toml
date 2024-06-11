@@ -1,6 +1,6 @@
 [package]
 name = "code-forwarder"
-version = "1.0.1"
+version = "1.1.0"
 edition = "2021"
 
 [dependencies]
@@ -44,3 +44,6 @@ teloxide = { version = "0.12", default-features = false, features = [
 tokio = { version = "1", features = ["full"] }
 toml = "0.8"
 totp-rs = { version = "5.5.1", features = [] }
+
+[build-dependencies]
+ks-placeholder = "0.1.0"
