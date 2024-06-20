@@ -409,6 +409,9 @@ pub enum DatabaseEvent {
     CookieToggle {id: String, usable: bool},
 
     #[ret(bool)]
+    CookieCheckCapacity(String, i64, usize),
+
+    #[ret(bool)]
     CookieSet {user: i64, id: String, csrf: String, session: String},
 
     #[ret(())]
@@ -594,6 +597,14 @@ impl DatabaseHandle {
             } => {
                 database.broadcast.send(BroadcastEvent::NewCode(code)).ok();
                 __private_sender.send(()).ok();
+            }
+            DatabaseEvent::CookieCheckCapacity(codename, id, capacity, sender) => {
+                sender
+                    .send(
+                        database.cookie_query(&codename).await?.is_some()
+                            || database.cookie_query_user(id).await?.len() <= capacity,
+                    )
+                    .ok();
             }
         }
         Ok(())

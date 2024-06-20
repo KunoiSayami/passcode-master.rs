@@ -366,13 +366,24 @@ pub async fn handle_cookie_command(
             }
             arg.database().cookie_toggle(id.to_string(), enabled).await;
 
-            bot.send_message(msg.chat.id, format!("Toggle {} to {}", id, enabled))
+            bot.send_message(msg.chat.id, format!("Toggle {id} to {enabled}"))
                 .await?;
         }
         CookieOps::Modify(id, csrf, session) => {
             //log::debug!("{id:?}");
             if !VALID_CODENAME.is_match(id) {
                 bot.send_message(msg.chat.id, "Invalid codename").await?;
+                return Ok(());
+            }
+
+            if !arg.check_admin(msg.chat.id)
+                && !arg
+                    .database()
+                    .cookie_check_capacity(id.to_string(), msg.chat.id.0, 2)
+                    .await
+                    .unwrap_or(true)
+            {
+                bot.send_message(msg.chat.id, "Max cookie capacity exceed, if you want more capacity, please contact administrator").await?;
                 return Ok(());
             }
 
