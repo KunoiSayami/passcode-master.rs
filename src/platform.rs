@@ -619,7 +619,7 @@ pub async fn handle_callback_query(
     }
 
     if let Some(original) = &msg.message {
-        bot.edit_message_reply_markup(original.chat.id, original.id)
+        bot.edit_message_reply_markup(original.chat().id, original.id())
             .await?;
     }
     bot.answer_callback_query(msg.id).await?;

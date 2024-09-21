@@ -3,6 +3,10 @@ use log::{error, info};
 use sqlx::{sqlite::SqliteConnectOptions, Connection, SqliteConnection};
 
 pub mod v1 {
+    pub const VERSION: &str = "1";
+}
+
+pub mod v2 {
     pub const CREATE_STATEMENT: &str = r#"
         CREATE TABLE "codes" (
             "code"	TEXT NOT NULL UNIQUE,
@@ -34,15 +38,16 @@ pub mod v1 {
         );
 
         CREATE TABLE "history" (
+            "entry_id" INTEGER NOT NULL,
             "timestamp" INTEGER NOT NULL,
             "id"        TEXT NOT NULL,
             "code"      TEXT NOT NULL,
             "error"     TEXT,
-            PRIMARY KEY("timestamp")
+	        PRIMARY KEY("entry_id" AUTOINCREMENT)
         );
     "#;
 
-    pub const VERSION: &str = "1";
+    pub const VERSION: &str = "2";
 
     #[derive(Clone)]
     pub enum BroadcastEvent {
@@ -58,6 +63,37 @@ pub mod v1 {
         pub fn exit() -> Self {
             Self::Exit
         }
+    }
+
+    pub async fn migration_v1(conn: &mut sqlx::SqliteConnection) -> sqlx::Result<()> {
+        sqlx::query(
+            r#"
+            CREATE TABLE "history_v2" (
+                "entry_id" INTEGER NOT NULL,
+                "timestamp" INTEGER NOT NULL,
+                "id"        TEXT NOT NULL,
+                "code"      TEXT NOT NULL,
+                "error"     TEXT,
+                PRIMARY KEY("entry_id" AUTOINCREMENT)
+            );
+        "#,
+        )
+        .execute(&mut *conn)
+        .await?;
+
+        sqlx::query(r#"INSERT INTO "history_v2" ("timestamp", "id", "code", "error") SELECT "timestamp", "id", "code", "error" FROM "history""#).execute(&mut *conn).await?;
+
+        sqlx::query(r#"DROP TABLE "history""#)
+            .execute(&mut *conn)
+            .await?;
+        sqlx::query(r#"ALTER TABLE "history_v2" RENAME TO "history""#)
+            .execute(&mut *conn)
+            .await?;
+        sqlx::query(r#"UPDATE "meta" SET "value" = '2' WHERE "key" = 'version' "#)
+            .execute(&mut *conn)
+            .await?;
+
+        Ok(())
     }
 }
 
@@ -81,13 +117,12 @@ pub trait DatabaseCheckExt {
         )
     }
 
-    async fn check_database_version(&mut self) -> sqlx::Result<bool> {
+    async fn check_database_version(&mut self) -> sqlx::Result<Option<String>> {
         Ok(
             sqlx::query_as::<_, (String,)>(r#"SELECT "value" FROM "meta" WHERE "key" = 'version'"#)
                 .fetch_optional(self.conn_())
                 .await?
-                .map(|(x,)| x.eq(current::VERSION))
-                .unwrap_or(false),
+                .map(|(x,)| x),
         )
     }
 
@@ -126,13 +161,26 @@ impl Database {
         })
     }
 
+    async fn migration(&mut self) -> sqlx::Result<bool> {
+        if self
+            .check_database_version()
+            .await?
+            .is_some_and(|x| x.eq(v1::VERSION))
+        {
+            v2::migration_v1(&mut self.conn).await?;
+            log::info!("Migration database to v2");
+            return Ok(true);
+        }
+        Ok(false)
+    }
+
     pub async fn init(&mut self) -> sqlx::Result<bool> {
         self.init = true;
         if !self.check_database_table().await? {
             self.create_db().await?;
             self.insert_database_version().await?;
         }
-        self.check_database_version().await
+        self.migration().await
     }
 
     pub async fn _check_auth(&mut self, user: i64) -> sqlx::Result<bool> {
@@ -318,19 +366,21 @@ impl Database {
     }
 
     pub async fn log_add(&mut self, id: &str, code: &str, error: Option<String>) -> DBResult<()> {
-        sqlx::query(r#"INSERT INTO "history" VALUES (?, ?, ?, ?)"#)
-            .bind(kstool::time::get_current_second() as i64)
-            .bind(id)
-            .bind(code)
-            .bind(error)
-            .execute(&mut self.conn)
-            .await?;
+        sqlx::query(
+            r#"INSERT INTO "history" ("timestamp", "id", "code", "error") VALUES (?, ?, ?, ?)"#,
+        )
+        .bind(kstool::time::get_current_second() as i64)
+        .bind(id)
+        .bind(code)
+        .bind(error)
+        .execute(&mut self.conn)
+        .await?;
         Ok(())
     }
 
     pub async fn log_query(&mut self, id: &str) -> DBResult<Vec<HistoryRow>> {
         sqlx::query_as(
-            r#"SELECT * FROM "history" WHERE "id" = ? ORDER BY "timestamp" DESC LIMIT 20"#,
+            r#"SELECT "timestamp", "id", "code", "error" FROM "history" WHERE "id" = ? ORDER BY "entry_id" DESC LIMIT 20"#,
         )
         .bind(id)
         .fetch_all(&mut self.conn)
@@ -338,7 +388,7 @@ impl Database {
     }
 
     pub async fn log_query_all(&mut self) -> DBResult<Vec<HistoryRow>> {
-        sqlx::query_as(r#"SELECT * FROM "history" ORDER BY "timestamp" DESC LIMIT 40"#)
+        sqlx::query_as(r#"SELECT "timestamp", "id", "code", "error" FROM "history" ORDER BY "entry_id" DESC LIMIT 40"#)
             .fetch_all(&mut self.conn)
             .await
     }
@@ -631,7 +681,7 @@ impl DatabaseHandle {
 pub type DBResult<T> = sqlx::Result<T>;
 use tap::{TapFallible, TapOptional};
 use tokio::sync::broadcast;
-pub use v1 as current;
+pub use v2 as current;
 
 use crate::types::{AccessLevel, CodeRow, Cookie, HistoryRow, MetaRow, User, VStats};
 
