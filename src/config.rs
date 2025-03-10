@@ -44,7 +44,7 @@ impl Config {
             30,
             totp_rs::Secret::Encoded(self.totp.clone())
                 .to_bytes()
-                .map_err(|e| anyhow::anyhow!("TOTP parse error: {:?}", e))?,
+                .map_err(|e| anyhow::anyhow!("TOTP parse error: {e:?}"))?,
         )?)
     }
 }

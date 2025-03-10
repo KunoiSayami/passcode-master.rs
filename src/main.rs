@@ -15,11 +15,11 @@ use std::io::Write;
 async fn async_main(config: String) -> anyhow::Result<()> {
     let config = Config::load(&config)
         .await
-        .tap_err(|e| error!("Load configure error: {:?}", e))?;
+        .tap_err(|e| error!("Load configure error: {e:?}"))?;
 
     let (database, operator, broadcast) = DatabaseHandle::connect(config.database())
         .await
-        .tap_err(|e| error!("Load database error: {:?}", e))?;
+        .tap_err(|e| error!("Load database error: {e:?}"))?;
 
     let totp = config.get_totp()?;
 
@@ -38,7 +38,7 @@ async fn async_main(config: String) -> anyhow::Result<()> {
     database
         .wait()
         .await
-        .tap_err(|e| error!("Database error: {:?}", e))?;
+        .tap_err(|e| error!("Database error: {e:?}"))?;
 
     web.await??;
     Ok(())

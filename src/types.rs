@@ -118,7 +118,7 @@ impl Auth {
         let origin_hash = match argon2::PasswordHash::new(origin) {
             Ok(hash) => hash,
             Err(e) => {
-                log::error!("Original password parse error: {:?}", e);
+                log::error!("Original password parse error: {e:?}");
                 return false;
             }
         };

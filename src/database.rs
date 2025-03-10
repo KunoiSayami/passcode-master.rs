@@ -667,7 +667,7 @@ impl DatabaseHandle {
             }
             Self::handle_event(&mut database, event)
                 .await
-                .tap_err(|e| error!("Sqlite error: {:?}", e))?;
+                .tap_err(|e| error!("Sqlite error: {e:?}"))?;
         }
         database.close().await?;
         Ok(())

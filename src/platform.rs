@@ -248,7 +248,7 @@ pub async fn bot_run(
                             Command::Resent { code } => handle_resent(bot, msg, arg, code).await,
                             Command::Invite => handle_get_invite(bot, msg, arg).await,
                         }
-                        .tap_err(|e| log::error!("Handle command error: {:?}", e))
+                        .tap_err(|e| log::error!("Handle command error: {e:?}"))
                     },
                 ),
         )
@@ -348,7 +348,7 @@ pub async fn handle_cookie_command(
     let ops = match CookieOps::try_from(ops.as_str()) {
         Ok(ops) => ops,
         Err(e) => {
-            log::error!("Cookie arg: {:?}", e);
+            log::error!("Cookie arg: {e:?}");
             return Ok(());
         }
     };
