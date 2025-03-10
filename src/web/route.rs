@@ -1,16 +1,17 @@
 use std::sync::Arc;
 
 use axum::{
+    Extension, Json,
     extract::{
-        ws::{Message, WebSocket},
         WebSocketUpgrade,
+        ws::{Message, WebSocket},
     },
     response::IntoResponse,
-    Extension, Json,
 };
 use axum_extra::TypedHeader;
+use futures_util::SinkExt as _;
 use log::{error, info, warn};
-use tap::TapFallible;
+
 use tokio::sync::broadcast;
 
 use crate::{config::Config, database::BroadcastEvent, types::Auth};
@@ -55,10 +56,10 @@ pub async fn handle_upgrade(
 ) -> impl IntoResponse {
     ws.on_upgrade(|socket| async move {
         let ip = real_ip.into_inner();
-        info!("Accept request from {:?}", &ip);
+        info!("Accept request from {ip:?}");
         handle_code_query(socket, broadcast.subscribe(), password, &ip)
             .await
-            .tap_err(|e| error!("Handle {} websocket error: {:?}", ip, e))
+            .inspect_err(|e| error!("Handle {ip} websocket error: {e:?}"))
             .ok();
     })
 }
@@ -79,10 +80,10 @@ pub async fn handle_code_query(
                 }
                 match event {
                     BroadcastEvent::NewCode(code) => {
-                        socket.send(Message::Text(code)).await?;
+                        socket.send(Message::Text(code.into())).await?;
                     }
                     BroadcastEvent::Exit => {
-                        socket.send(Message::Text("close".to_string())).await.ok();
+                        socket.send(Message::Text("close".into())).await.ok();
                         break;
                     }
                 }
@@ -101,7 +102,7 @@ pub async fn handle_code_query(
                             }
                         }
                     } else {
-                        warn!("Skip unreadable bytes: {:?}", message);
+                        warn!("Skip unreadable bytes: {message:?}");
                     }
                 } else {
                     return Ok(());
@@ -110,6 +111,6 @@ pub async fn handle_code_query(
         }
     }
     socket.close().await.ok();
-    info!("Disconnect from: {}", ip);
+    info!("Disconnect from: {ip}");
     Ok(())
 }

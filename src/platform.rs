@@ -1,10 +1,9 @@
-use std::sync::Arc;
+use std::sync::{Arc, LazyLock};
 
 use anyhow::anyhow;
 use log::warn;
-use once_cell::sync::Lazy;
-use tap::TapFallible;
 use teloxide::{
+    Bot,
     adaptors::DefaultParseMode,
     dispatching::{Dispatcher, HandlerExt, UpdateFilterExt},
     macros::BotCommands,
@@ -15,18 +14,18 @@ use teloxide::{
         CallbackQuery, ChatId, InlineKeyboardButton, InlineKeyboardMarkup, Message, MessageId,
         ParseMode, Update,
     },
-    Bot,
 };
 
 use crate::{config::Config, database::DatabaseHelper, types::AccessLevel};
 
-static PASSCODE_RE: Lazy<regex::Regex> = Lazy::new(|| regex::Regex::new(r"^[\w\d]{5,}$").unwrap());
+static PASSCODE_RE: LazyLock<regex::Regex> =
+    LazyLock::new(|| regex::Regex::new(r"^[\w\d]{5,}$").unwrap());
 
-pub static TELEGRAM_ESCAPE_RE: Lazy<regex::Regex> =
-    Lazy::new(|| regex::Regex::new(r"([_*\[\]\(\)~`>#\+-=|\{}\.!])").unwrap());
+pub static TELEGRAM_ESCAPE_RE: LazyLock<regex::Regex> =
+    LazyLock::new(|| regex::Regex::new(r"([_*\[\]\(\)~`>#\+-=|\{}\.!])").unwrap());
 
-static VALID_CODENAME: Lazy<regex::Regex> =
-    Lazy::new(|| regex::Regex::new(r"^(Agent_\d{5,}|[\w\d]{3,})$").unwrap());
+static VALID_CODENAME: LazyLock<regex::Regex> =
+    LazyLock::new(|| regex::Regex::new(r"^(Agent_\d{5,}|[\w\d]{3,})$").unwrap());
 
 #[derive(BotCommands, Clone)]
 #[command(rename_rule = "lowercase")]
@@ -248,7 +247,7 @@ pub async fn bot_run(
                             Command::Resent { code } => handle_resent(bot, msg, arg, code).await,
                             Command::Invite => handle_get_invite(bot, msg, arg).await,
                         }
-                        .tap_err(|e| log::error!("Handle command error: {e:?}"))
+                        .inspect_err(|e| log::error!("Handle command error: {e:?}"))
                     },
                 ),
         )
@@ -635,12 +634,12 @@ pub fn make_fr_keyboard(code: &str) -> InlineKeyboardMarkup {
 
 pub fn mark_auth_keyboard(user: i64) -> InlineKeyboardMarkup {
     InlineKeyboardMarkup::new([[
-        InlineKeyboardButton::callback("Cookie", format!("user cookie {}", user)),
-        InlineKeyboardButton::callback("Message", format!("user message {}", user)),
-        InlineKeyboardButton::callback("All", format!("user all {}", user)),
+        InlineKeyboardButton::callback("Cookie", format!("user cookie {user}")),
+        InlineKeyboardButton::callback("Message", format!("user message {user}")),
+        InlineKeyboardButton::callback("All", format!("user all {user}")),
     ]])
     .append_row([InlineKeyboardButton::callback(
         "No",
-        format!("user reject {}", user),
+        format!("user reject {user}"),
     )])
 }

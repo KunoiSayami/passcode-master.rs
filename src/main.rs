@@ -2,7 +2,6 @@ use clap::arg;
 use config::Config;
 use database::DatabaseHandle;
 use log::error;
-use tap::TapFallible;
 
 mod config;
 mod database;
@@ -15,11 +14,11 @@ use std::io::Write;
 async fn async_main(config: String) -> anyhow::Result<()> {
     let config = Config::load(&config)
         .await
-        .tap_err(|e| error!("Load configure error: {e:?}"))?;
+        .inspect_err(|e| error!("Load configure error: {e:?}"))?;
 
     let (database, operator, broadcast) = DatabaseHandle::connect(config.database())
         .await
-        .tap_err(|e| error!("Load database error: {e:?}"))?;
+        .inspect_err(|e| error!("Load database error: {e:?}"))?;
 
     let totp = config.get_totp()?;
 
@@ -38,7 +37,7 @@ async fn async_main(config: String) -> anyhow::Result<()> {
     database
         .wait()
         .await
-        .tap_err(|e| error!("Database error: {e:?}"))?;
+        .inspect_err(|e| error!("Database error: {e:?}"))?;
 
     web.await??;
     Ok(())

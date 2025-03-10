@@ -1,9 +1,10 @@
+use std::sync::LazyLock;
+
 use axum::http::HeaderValue;
 use axum_extra::headers::{self, Header};
-use once_cell::sync::Lazy;
 
-static HEADER_REAL_IP_NAME: Lazy<axum::http::HeaderName> =
-    Lazy::new(|| "X-Real-IP".parse().unwrap());
+static HEADER_REAL_IP_NAME: LazyLock<axum::http::HeaderName> =
+    LazyLock::new(|| "X-Real-IP".parse().unwrap());
 
 pub struct RealIP(String);
 

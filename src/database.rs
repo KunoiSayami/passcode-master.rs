@@ -667,7 +667,7 @@ impl DatabaseHandle {
             }
             Self::handle_event(&mut database, event)
                 .await
-                .tap_err(|e| error!("Sqlite error: {e:?}"))?;
+                .inspect_err(|e| error!("Sqlite error: {e:?}"))?;
         }
         database.close().await?;
         Ok(())
@@ -679,7 +679,7 @@ impl DatabaseHandle {
 }
 
 pub type DBResult<T> = sqlx::Result<T>;
-use tap::{TapFallible, TapOptional};
+use tap::TapOptional;
 use tokio::sync::broadcast;
 pub use v2 as current;
 
